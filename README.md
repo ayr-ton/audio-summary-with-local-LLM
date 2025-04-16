@@ -70,6 +70,7 @@ uv run python src/summary.py [OPTIONS]
 
 - **Output Options**:
   - `--output <FILE>`: Specify output path (default: ./summary.md).
+  - `--append`: Append to existing file instead of overwriting.
   - `--transcript-only`: Only transcribe without summarizing.
 
 - **Language Support**:

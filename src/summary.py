@@ -170,6 +170,7 @@ def main():
     group.add_argument("--from-transcript", type=str, help="Path to a local .txt transcript file to process.")
 
     parser.add_argument("--output", type=str, default="./summary.md", help="Output markdown file path.")
+    parser.add_argument("--append", action='store_true', help="Append to the output file instead of overwriting it.")
     parser.add_argument("--transcript-only", action='store_true', help="Only transcribe the file (if applicable), do not summarize or query.")
     parser.add_argument("--language", type=str, help=f"Language code for transcription (e.g., 'en', 'fr', 'es', or 'auto' for detection). Default: {WHISPER_LANGUAGE}")
     parser.add_argument("--with-prompt", type=str, help="Ask a specific question about the transcript (only valid with --from-transcript).")
@@ -277,10 +278,19 @@ def main():
             output_path = Path(args.output)
             # Ensure parent directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "w") as md_file:
-                # md_file.write(f"{output_title}\n\n") # Add title if not included by LLM
+
+            file_mode = 'a' if args.append else 'w'
+            print(f"Writing result to {output_path} (mode: {'append' if args.append else 'overwrite'})")
+            with open(output_path, file_mode, encoding='utf-8') as md_file:
+                # Add a separator if appending to an existing non-empty file
+                if args.append and output_path.exists() and output_path.stat().st_size > 0:
+                    md_file.write("\n\n---\n\n") # Markdown horizontal rule for separation
+
+                # The llm_result should ideally contain the title already based on the prompts
                 md_file.write(llm_result)
-            print(f"Output written to {output_path}")
+
+            print(f"Output successfully written to {output_path}")
+
         except Exception as e:
             print(f"Error writing output file {args.output}: {e}")
             sys.exit(1)
