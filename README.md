@@ -2,7 +2,7 @@
 
 This tool is designed to provide a quick and concise summary of audio and video files. It supports summarizing content either from a local file or directly from YouTube. The tool uses Whisper for transcription and a local version of Llama3 (via Ollama) for generating summaries.
 
-> [!TIP]  
+> [!TIP]
 > It is possible to change the model you wish to use.
 > To do this, change the `OLLAMA_MODEL` variable, and download the associated model via [ollama](https://github.com/ollama/ollama)
 
@@ -13,6 +13,7 @@ This tool is designed to provide a quick and concise summary of audio and video 
 - **Transcription**: Converts audio content to text using Whisper.
 - **Summarization**: Generates a concise summary using Llama3 (Ollama).
 - **Transcript Only Option**: Option to only transcribe the audio content without generating a summary.
+- **Question Answering**: Extract answers from the context of a provided transcript.
 - **Device Optimization**: Automatically uses the best available hardware (MPS for Mac, CUDA for NVIDIA GPUs, or CPU).
 
 ## Prerequisites
@@ -54,13 +55,28 @@ ollama run llama3 "tell me a joke"
 
 ## Usage
 
-The tool can be executed with the following command line options:
+The tool offers multiple input options:
 
-- `--from-youtube`: To download and summarize a video from YouTube.
-- `--from-local`: To load and summarize an audio or video file from the local disk.
-- `--output`: Specify the output file path (default: ./summary.md)
-- `--transcript-only`: To only transcribe the audio content without generating a summary.
-- `--language`: Select the language to be used for the transcription (default: en)
+```bash
+uv run python src/summary.py [OPTIONS]
+```
+
+### Options
+
+- **Input Sources**:
+  - `--from-youtube <URL>`: Process audio from YouTube.
+  - `--from-local <PATH>`: Use a local audio/video file.
+  - `--from-transcript <PATH>`: Read and process an existing transcript file.
+
+- **Output Options**:
+  - `--output <FILE>`: Specify output path (default: ./summary.md).
+  - `--transcript-only`: Only transcribe without summarizing.
+
+- **Language Support**:
+  - `--language <CODE>`: Set transcription language (e.g., 'en', 'fr') or use auto-detection.
+
+- **Question Answering**:
+  - `--with-prompt <QUESTION>`: Ask a specific question about the transcript.
 
 ### Examples
 
@@ -88,7 +104,19 @@ The tool can be executed with the following command line options:
    uv run python src/summary.py --from-local <path-to-audio-file> --transcript-only
    ```
 
-5. **Specifying a custom output file:**
+5. **Process transcript file**:
+
+   ```bash
+   uv run python src/summary.py --from-transcript "transcript.txt"
+   ```
+
+6. **Answer a specific question from transcript**:
+
+   ```bash
+   uv run python src/summary.py --from-transcript "transcript.txt" --with-prompt "What is the main topic?"
+   ```
+
+6. **Specifying a custom output file:**
 
    ```bash
    uv run python src/summary.py --from-youtube <YouTube-Video-URL> --output my_summary.md
