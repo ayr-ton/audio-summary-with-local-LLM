@@ -1,6 +1,6 @@
 # Audio Summary with Local LLM
 
-This tool is designed to provide a quick and concise summary of audio and video files. It supports summarizing content either from a local file or directly from YouTube. The tool uses Whisper for transcription and a local version of Llama3 (via Ollama) for generating summaries.
+This tool is designed to provide a quick and concise summary of audio and video files. It supports summarizing content either from a local file or directly from YouTube. The tool uses Whisper for transcription and a local LLM (via Ollama) for generating summaries. The default model is `gpt-oss:120b`.
 
 > [!TIP]
 > It is possible to change the model you wish to use.
@@ -11,7 +11,7 @@ This tool is designed to provide a quick and concise summary of audio and video 
 - **YouTube Integration**: Download and summarize content directly from YouTube.
 - **Local File Support**: Summarize audio/video files available on your local disk.
 - **Transcription**: Converts audio content to text using Whisper.
-- **Summarization**: Generates a concise summary using Llama3 (Ollama).
+- **Summarization**: Generates a concise summary using GPT-OSS:120b (via Ollama).
 - **Transcript Only Option**: Option to only transcribe the audio content without generating a summary.
 - **Question Answering**: Extract answers from the context of a provided transcript.
 - **Device Optimization**: Automatically uses the best available hardware (MPS for Mac, CUDA for NVIDIA GPUs, or CPU).
@@ -27,7 +27,7 @@ Before you start using this tool, you need to install the following dependencies
 
 ## Installation
 
-### Using uv
+### Using uv (Recommended for Development)
 
 Clone the repository and install the required Python packages using [uv](https://github.com/astral-sh/uv):
 
@@ -38,19 +38,42 @@ cd audio-summary-with-local-LLM
 # Create and activate a virtual environment with uv
 uv sync
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Run with uv
+uv run audio-summary [OPTIONS]
 ```
+
+### Using pipx (Recommended for Global CLI Access)
+
+For a global command-line tool that stays updated with the latest code:
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/damienarnodo/audio-summary-with-local-LLM.git
+cd audio-summary-with-local-LLM
+```
+
+2. Install with pipx in editable mode:
+   ([install pipx](https://pipx.pypa.io/latest/installation/) if needed)
+
+```bash
+pipx install -e .
+```
+
+3. To update, just run `git pull` inside the repository directory. No pip commands needed again.
 
 ### LLM Requirement
 
 [Download and install](https://ollama.com) Ollama to carry out LLM Management. More details about LLM models supported can be found on the Ollama [GitHub](https://github.com/ollama/ollama).
 
-Download and use the Llama3 model:
+Download and use the default model (gpt-oss:120b):
 
 ```bash
-ollama pull llama3
+ollama pull gpt-oss:120b
 
 ## Test the access:
-ollama run llama3 "tell me a joke"
+ollama run gpt-oss:120b "which tools do you have available"
 ```
 
 ## Usage
@@ -58,7 +81,7 @@ ollama run llama3 "tell me a joke"
 The tool offers multiple input options:
 
 ```bash
-uv run python src/summary.py [OPTIONS]
+audio-summary [OPTIONS]
 ```
 
 ### Options
@@ -84,43 +107,43 @@ uv run python src/summary.py [OPTIONS]
 1. **Summarizing a YouTube video:**
 
    ```bash
-   uv run python src/summary.py --from-youtube <YouTube-Video-URL>
+   audio-summary --from-youtube <YouTube-Video-URL>
    ```
 
 2. **Summarizing a local audio file:**
 
    ```bash
-   uv run python src/summary.py --from-local <path-to-audio-file>
+   audio-summary --from-local <path-to-audio-file>
    ```
 
 3. **Transcribing a YouTube video without summarizing:**
 
    ```bash
-   uv run python src/summary.py --from-youtube <YouTube-Video-URL> --transcript-only
+   audio-summary --from-youtube <YouTube-Video-URL> --transcript-only
    ```
 
 4. **Transcribing a local audio file without summarizing:**
 
    ```bash
-   uv run python src/summary.py --from-local <path-to-audio-file> --transcript-only
+   audio-summary --from-local <path-to-audio-file> --transcript-only
    ```
 
 5. **Process transcript file**:
 
    ```bash
-   uv run python src/summary.py --from-transcript "transcript.txt"
+   audio-summary --from-transcript "transcript.txt"
    ```
 
 6. **Answer a specific question from transcript**:
 
    ```bash
-   uv run python src/summary.py --from-transcript "transcript.txt" --with-prompt "What is the main topic?"
+   audio-summary --from-transcript "transcript.txt" --with-prompt "What is the main topic?"
    ```
 
 6. **Specifying a custom output file:**
 
    ```bash
-   uv run python src/summary.py --from-youtube <YouTube-Video-URL> --output my_summary.md
+   audio-summary --from-youtube <YouTube-Video-URL> --output my_summary.md
    ```
 
 The output summary will be saved in a markdown file in the specified output directory, while the transcript will be saved in the temporary directory.
@@ -200,7 +223,7 @@ You can easily change the models used for transcription and summarization by mod
 
 ```python
 # Default models
-OLLAMA_MODEL = "llama3"
+OLLAMA_MODEL = "gpt-oss:120b"
 WHISPER_MODEL = "openai/whisper-large-v2"
 ```
 
@@ -240,7 +263,8 @@ To use a different model for summarization:
    ```
 
 3. Popular alternatives include:
-   - `"llama3"` (default)
+   - `"gpt-oss:120b"` (default)
+   - `"llama3"`
    - `"mistral"`
    - `"llama2"`
    - `"gemma:7b"`
