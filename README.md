@@ -72,9 +72,38 @@ Download and use the default model (gpt-oss:120b):
 ```bash
 ollama pull gpt-oss:120b
 
-## Test the access:
-ollama run gpt-oss:120b "which tools do you have available"
+# Test the access:
+ollama run gpt-oss:120b "which tools do you have available?"
 ```
+
+### Remote GPU Execution (Advanced)
+
+If you have a more powerful NVIDIA GPU on another machine in your network, you can run the entire audio-summary pipeline remotely and sync the results back:
+
+**1. On the remote GPU machine:**
+```bash
+# Install audio-summary on the remote machine (one-time setup)
+git clone https://github.com/damienarnodo/audio-summary-with-local-LLM.git
+cd audio-summary-with-local-LLM
+pipx install -e .
+```
+
+**2. From your local machine:**
+```bash
+# Run audio-summary remotely via SSH
+ssh user@gpu-machine "cd /path/to/audio-summary && audio-summary --from-youtube '<URL>'"
+
+# Sync the generated files back to your local machine
+rsync -av user@gpu-machine:/path/to/audio-summary/summary.md ./
+rsync -av user@gpu-machine:/path/to/audio-summary/tmp/ ./tmp/
+```
+
+**Benefits:**
+- Leverage remote NVIDIA GPU for both Whisper transcription and LLM summarization
+- Keep your local machine free from heavy compute
+- Works across different operating systems (e.g., macOS local, Linux remote)
+
+**Note:** Ensure SSH key-based authentication is set up for seamless operation.
 
 ## Usage
 
