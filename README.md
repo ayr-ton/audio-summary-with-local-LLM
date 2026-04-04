@@ -76,34 +76,104 @@ ollama pull gpt-oss:120b
 ollama run gpt-oss:120b "which tools do you have available?"
 ```
 
-### Remote GPU Execution (Advanced)
+### Granular Remote Execution (Advanced)
 
-If you have a more powerful NVIDIA GPU on another machine in your network, you can run the entire audio-summary pipeline remotely and sync the results back:
+Execute each stage of the pipeline on either local or remote machines, allowing flexible hybrid workflows.
 
-**1. On the remote GPU machine:**
+**Remote Flags:**
+- `--remote-download` - Download YouTube video on remote machine
+- `--remote-transcription` - Run Whisper transcription on remote machine
+- `--remote-summarize` - Run Ollama summarization on remote machine
+- `--remote-transcribe` - Shorthand for `--remote-download --remote-transcription`
+
+**Remote Configuration:**
+- `--remote-host <HOST>` - Specify remote host (required if using remote flags without config)
+- `--remote-path <PATH>` - Path to audio-summary installation on remote
+- `--remote-user <USER>` - SSH username for remote
+- `--dry-run` - Show what would be executed without running
+
+### Setup
+
+**1. Configure SSH Key Authentication:**
 ```bash
-# Install audio-summary on the remote machine (one-time setup)
-git clone https://github.com/damienarnodo/audio-summary-with-local-LLM.git
-cd audio-summary-with-local-LLM
-pipx install -e .
+# Generate SSH key if you don't have one
+ssh-keygen -t ed25519 -C "audio-summary"
+
+# Copy key to remote host
+ssh-copy-id user@remote-host
+
+# Test connection
+ssh user@remote-host "echo 'Connected!'"
 ```
 
-**2. From your local machine:**
-```bash
-# Run audio-summary remotely via SSH
-ssh user@gpu-machine "cd /path/to/audio-summary && audio-summary --from-youtube '<URL>'"
+**2. Create Configuration File (Optional but Recommended):**
 
-# Sync the generated files back to your local machine
-rsync -av user@gpu-machine:/path/to/audio-summary/summary.md ./
-rsync -av user@gpu-machine:/path/to/audio-summary/tmp/ ./tmp/
+Create `~/.config/audio-summary/config.yaml`:
+
+```yaml
+# Audio Summary Remote Configuration
+remotes:
+  gpu-server:
+    host: gpu-server.local
+    user: tom
+    path: /home/tom/projects/audio-summary
+    ssh_key: ~/.ssh/id_ed25519
+    max_retries: 3
 ```
 
-**Benefits:**
-- Leverage remote NVIDIA GPU for both Whisper transcription and LLM summarization
-- Keep your local machine free from heavy compute
-- Works across different operating systems (e.g., macOS local, Linux remote)
+### Examples
 
-**Note:** Ensure SSH key-based authentication is set up for seamless operation.
+**Example 1: Download on Remote (Local Transcribe + Summarize)**
+```bash
+# Download remotely, transcribe and summarize locally
+audio-summary --from-youtube "<URL>" --remote-download
+```
+
+**Example 2: Transcribe on Remote (Local Download, Remote Transcribe)**
+```bash
+# Download locally, transcribe remotely, summarize locally
+audio-summary --from-youtube "<URL>" --remote-transcription
+```
+
+**Example 3: Remote Transcribe Only (Upload Local MP3)**
+```bash
+# Upload local MP3 to remote, transcribe remotely, download transcript
+audio-summary --from-local "./file.mp3" --remote-transcription
+```
+
+**Example 4: Remote Summarize Only**
+```bash
+# Upload transcript to remote, summarize remotely, download markdown
+audio-summary --from-transcript "./file.txt" --remote-summarize
+```
+
+**Example 5: Remote Download + Transcribe (Shorthand)**
+```bash
+# Same as --remote-download --remote-transcription
+audio-summary --from-youtube "<URL>" --remote-transcribe
+```
+
+**Example 6: Full Remote Pipeline**
+```bash
+# Download, transcribe, and summarize all on remote
+audio-summary --from-youtube "<URL>" --remote-transcribe --remote-summarize
+```
+
+**Example 7: Ad-hoc Remote (No Config File)**
+```bash
+# Use remote without creating config file
+audio-summary --from-youtube "<URL>" \
+  --remote-host gpu-server.local \
+  --remote-user tom \
+  --remote-path /home/tom/audio-summary \
+  --remote-transcribe
+```
+
+**Example 8: Dry Run (Test Configuration)**
+```bash
+# Show what would be executed without actually running
+audio-summary --from-youtube "<URL>" --remote-transcribe --dry-run
+```
 
 ## Usage
 
