@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from audio_summary.lock_manager import (
     JobInfo,
-    LockContext,
     LockManager,
     QueueStatus,
     get_queue_status,

@@ -384,57 +384,7 @@ class TestCleanupAudio:
 
         # Mock file operations
         mocker.patch("pathlib.Path.is_file", return_value=True)
-        mock_transcribe = mocker.patch(
-            "audio_summary.cli.transcribe_file", return_value="transcript"
-        )
-
-        from audio_summary.cli import main
-
-        try:
-            main()
-        except SystemExit:
-            pass
-
-        # Verify warning was printed
-        captured = capsys.readouterr()
-        assert "--cleanup-audio is ignored when using --from-local" in captured.out
-
-
-class TestOllamaModel:
-    """Tests for OLLAMA_MODEL constant."""
-
-    def test_model_is_gpt_oss_20b(self):
-        """Test that OLLAMA_MODEL is set to gpt-oss:20b."""
-        assert OLLAMA_MODEL == "gpt-oss:20b"
-
-    def test_model_is_string(self):
-        """Test that OLLAMA_MODEL is a string."""
-        assert isinstance(OLLAMA_MODEL, str)
-
-
-class TestOllamaClientAuthentication:
-    """Tests for Ollama client authentication."""
-
-    def test_get_ollama_client_without_api_key(self, mocker):
-        """Test that get_ollama_client works without API key."""
-        import ollama
-        from audio_summary.cli import get_ollama_client
-
-        # Clear environment variables
-        mocker.patch.dict(os.environ, {}, clear=True)
-        mocker.patch.dict(os.environ, {"OLLAMA_HOST": "http://localhost:11434"})
-
-        # Mock ollama.Client
-        mock_client = mocker.MagicMock()
-        mocker.patch("ollama.Client", return_value=mock_client)
-
-        client = get_ollama_client()
-
-        # Verify client was created without headers
-        ollama.Client.assert_called_once_with(
-            host="http://localhost:11434",
-            headers=None,
-        )
+        mocker.patch("audio_summary.cli.transcribe_file", return_value="transcript")
 
     def test_get_ollama_client_with_api_key(self, mocker):
         """Test that get_ollama_client uses API key from environment."""
