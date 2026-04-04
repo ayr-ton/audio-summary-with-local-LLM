@@ -319,9 +319,9 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
 
         if args.dry_run:
             print(f"[DRY-RUN] Would check if MP3 exists on remote")
-        elif executor.check_file_exists(remote_mp3_path):
-            print(f"MP3 already exists on remote: {remote_mp3_path}")
-            # Execute download on remote
+        elif not executor.check_file_exists(remote_mp3_path):
+            # MP3 doesn't exist on remote, execute download
+            print(f"MP3 does not exist on remote, downloading...")
             cmd = f"uv run audio-summary --from-youtube '{args.from_youtube}' --transcript-only --output /dev/null"
             if args.dry_run:
                 print(f"[DRY-RUN] Would execute: {cmd}")
@@ -359,6 +359,8 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
                         print(f"stdout: {stdout}")
                         print(f"stderr: {stderr}")
                         sys.exit(1)
+        else:
+            print(f"MP3 already exists on remote: {remote_mp3_path}")
 
         # Download MP3 from remote
         print("Downloading MP3 from remote...")

@@ -103,12 +103,28 @@ src/audio_summary/
 - **CLI entry point:** `audio-summary` → `audio_summary.cli:main`
 - **Default LLM:** gpt-oss:120b (via Ollama, supports both local and Ollama Cloud)
 
+## TDD Workflow Requirements
+
+When fixing bugs or implementing features, follow this workflow:
+
+1. **Write/Update Tests First** - Before fixing code, write or update tests that reproduce the issue
+2. **Verify Test Failure** - Run tests to confirm they fail (red)
+3. **Implement Fix** - Make minimal changes to make tests pass (green)
+4. **Verify Test Pass** - Run tests to confirm fix works
+5. **Refactor** - Review and improve code quality while keeping tests passing
+
+This applies especially to:
+- Bug fixes (add regression test first)
+- New features (add feature tests first)
+- Remote execution logic (complex mocking scenarios)
+
 ## Pre-commit Checklist
 
 Before finishing work:
 1. Run `uv run ruff check . --fix` to fix linting issues
 2. Run `uv run ruff format .` to ensure consistent formatting
-3. Verify CLI runs: `uv run audio-summary --help`
+3. Run `uv run pytest` to verify all tests pass
+4. Verify CLI runs: `uv run audio-summary --help`
 
 ## Dependencies
 

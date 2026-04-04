@@ -238,8 +238,25 @@ default_remote: dave
 class TestGranularRemoteExecution:
     """Tests for granular remote execution functions."""
 
+    def _create_mock_executor(self, mocker, check_file_exists_return=False):
+        """Helper to create a mock RemoteExecutor."""
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.return_value = check_file_exists_return
+        mock_executor.get_file_size.return_value = 1000
+        # execute_with_retry returns (success, stdout, stderr)
+        mock_executor.execute_with_retry.return_value = (True, "success output", "")
+
+        # Patch RemoteExecutor in the remote module (used by cli.py)
+        mock_executor_class = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor_class.return_value.__exit__.return_value = None
+
+        mocker.patch("audio_summary.remote.RemoteExecutor", mock_executor_class)
+
+        return mock_executor, mock_executor_class
+
     def test_execute_remote_download(self, mocker, tmp_path):
-        """Test execute_remote_download function."""
+        """Test execute_remote_download function - downloads when file doesn't exist."""
         from audio_summary.cli import execute_remote_download
         from audio_summary.config import RemoteConfig
 
@@ -250,18 +267,25 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        # Create a mock for RemoteExecutor
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        # First check: file doesn't exist, then after download it should exist
         mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
-        mock_executor.check_file_exists.return_value = False
+        mock_executor.check_file_exists.side_effect = [False, True]
         mock_executor.get_file_size.return_value = 1000
+        mock_executor.execute_with_retry.return_value = (True, "success", "")
 
-        # Mock args
+        def mock_download(remote_path, local_path, **kwargs):
+            local_path.write_bytes(b"fake mp3 content")
+
+        mock_executor.download_file.side_effect = mock_download
+
+        mock_executor_class = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor_class.return_value.__exit__.return_value = None
+        mocker.patch("audio_summary.remote.RemoteExecutor", mock_executor_class)
+
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
         mock_args.dry_run = False
-        mock_args.title = "Test Video"
 
         data_directory = tmp_path
 
@@ -269,14 +293,14 @@ class TestGranularRemoteExecution:
             mock_args, config, "Test Video", data_directory
         )
 
-        # Verify RemoteExecutor was created with correct config
-        mock_executor_class.assert_called_once_with(config)
-
-        # Verify download was executed on remote
+        # Verify download was executed on remote (file didn't exist)
         mock_executor.execute_with_retry.assert_called_once()
 
         # Verify file was downloaded
         mock_executor.download_file.assert_called_once()
+
+        # Verify the result file exists
+        assert result.is_file()
 
     def test_execute_remote_download_file_exists(self, mocker, tmp_path):
         """Test execute_remote_download when file already exists on remote."""
@@ -290,11 +314,16 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
-        mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
-        mock_executor.check_file_exists.return_value = True  # File exists
-        mock_executor.get_file_size.return_value = 1000
+        # File exists on remote, so it should skip download
+        mock_executor, _ = self._create_mock_executor(
+            mocker, check_file_exists_return=True
+        )
+
+        # Make download_file actually create the file locally
+        def mock_download(remote_path, local_path, **kwargs):
+            local_path.write_bytes(b"fake mp3 content")
+
+        mock_executor.download_file.side_effect = mock_download
 
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
@@ -312,6 +341,9 @@ class TestGranularRemoteExecution:
         # Verify file was still downloaded
         mock_executor.download_file.assert_called_once()
 
+        # Verify the result file exists
+        assert result.is_file()
+
     def test_execute_remote_download_dry_run(self, mocker, tmp_path):
         """Test execute_remote_download in dry-run mode."""
         from audio_summary.cli import execute_remote_download
@@ -324,9 +356,7 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
-        mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor, _ = self._create_mock_executor(mocker)
 
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
@@ -342,6 +372,29 @@ class TestGranularRemoteExecution:
         mock_executor.execute_with_retry.assert_not_called()
         mock_executor.download_file.assert_not_called()
 
+    def _create_transcription_mock_executor(
+        self, mocker, check_file_exists_side_effect
+    ):
+        """Helper to create a mock for transcription tests."""
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.side_effect = check_file_exists_side_effect
+        mock_executor.get_file_size.return_value = 500
+        # execute_with_retry returns (success, stdout, stderr)
+        mock_executor.execute_with_retry.return_value = (True, "success output", "")
+
+        # download_file should actually create the file locally
+        def mock_download(remote_path, local_path, **kwargs):
+            local_path.write_text("fake transcript content")
+
+        mock_executor.download_file.side_effect = mock_download
+
+        mock_executor_class = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor_class.return_value.__exit__.return_value = None
+        mocker.patch("audio_summary.remote.RemoteExecutor", mock_executor_class)
+
+        return mock_executor
+
     def test_execute_remote_transcription_with_upload(self, mocker, tmp_path):
         """Test execute_remote_transcription uploads file when not on remote."""
         from audio_summary.cli import execute_remote_transcription
@@ -354,14 +407,8 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
-        mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
-        mock_executor.check_file_exists.side_effect = [
-            False,
-            False,
-        ]  # MP3 doesn't exist, transcript doesn't exist
-        mock_executor.get_file_size.return_value = 500
+        # MP3 doesn't exist, transcript doesn't exist
+        mock_executor = self._create_transcription_mock_executor(mocker, [False, False])
 
         mock_args = mocker.MagicMock()
         mock_args.dry_run = False
@@ -383,6 +430,9 @@ class TestGranularRemoteExecution:
         # Verify transcript was downloaded
         mock_executor.download_file.assert_called_once()
 
+        # Verify transcript content was returned
+        assert result == "fake transcript content"
+
     def test_execute_remote_transcription_mp3_exists(self, mocker, tmp_path):
         """Test execute_remote_transcription when MP3 already exists on remote."""
         from audio_summary.cli import execute_remote_transcription
@@ -395,14 +445,9 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
-        mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
-        mock_executor.check_file_exists.side_effect = [
-            True,
-            False,
-        ]  # MP3 exists, transcript doesn't
-        mock_executor.get_file_size.return_value = 500
+        # First call: transcript check (False = doesn't exist, enters else branch)
+        # Second call: MP3 check (True = exists, skip upload)
+        mock_executor = self._create_transcription_mock_executor(mocker, [False, True])
 
         mock_args = mocker.MagicMock()
         mock_args.dry_run = False
@@ -436,11 +481,8 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
-        mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
-        mock_executor.check_file_exists.side_effect = [True, True]  # Both exist
-        mock_executor.get_file_size.return_value = 500
+        # Both exist
+        mock_executor = self._create_transcription_mock_executor(mocker, [True, True])
 
         mock_args = mocker.MagicMock()
         mock_args.dry_run = False
@@ -471,9 +513,7 @@ class TestGranularRemoteExecution:
             path="/home/tom/audio-summary",
         )
 
-        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
-        mock_executor = mocker.MagicMock()
-        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor, _ = self._create_mock_executor(mocker)
 
         mock_args = mocker.MagicMock()
         mock_args.dry_run = True
