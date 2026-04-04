@@ -27,25 +27,33 @@ class RemoteExecutor:
         connect_kwargs = {
             "hostname": self.config.host,
             "username": self.config.user,
-            "allow_agent": False,  # Disable SSH agent to avoid public_blob errors
-            "look_for_keys": False,  # Don't look for keys in default locations
         }
 
         if self.config.ssh_key_path:
-            connect_kwargs["key_filename"] = str(self.config.ssh_key_path)
+            key_path = self.config.ssh_key_path
+            # Check if it's a hardware security key (ECDSA-SK or ED25519-SK)
+            key_name = key_path.name.lower()
+            if "_sk" in key_name:
+                # Hardware keys require SSH agent
+                print(f"Using SSH agent for hardware key: {key_path}")
+                connect_kwargs["allow_agent"] = True
+                connect_kwargs["look_for_keys"] = False
+            else:
+                # Regular key file
+                connect_kwargs["key_filename"] = str(key_path)
+                connect_kwargs["allow_agent"] = False
+                connect_kwargs["look_for_keys"] = False
         else:
-            # If no key specified, try to use SSH agent but catch errors
+            # No key specified, try SSH agent first
             connect_kwargs["allow_agent"] = True
             connect_kwargs["look_for_keys"] = True
 
         try:
             self._ssh.connect(**connect_kwargs)
-        except AttributeError as e:
-            if "public_blob" in str(e):
-                # Retry without agent if public_blob error occurs
-                print(
-                    "Retrying connection without SSH agent due to key compatibility issue..."
-                )
+        except Exception as e:
+            if "public_blob" in str(e) or "agent" in str(e).lower():
+                # Retry with explicit key file
+                print("Retrying with explicit key file...")
                 connect_kwargs["allow_agent"] = False
                 connect_kwargs["look_for_keys"] = False
                 # Try to find a key file

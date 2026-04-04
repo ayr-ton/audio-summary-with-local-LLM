@@ -291,7 +291,16 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
     """Execute download on remote host and download MP3 back."""
     print(f"Connecting to remote host: {remote_config.host}")
 
-    with RemoteExecutor(remote_config) as executor:
+    # Determine which executor to use
+    use_subprocess = (
+        remote_config.ssh_key_path and "_sk" in remote_config.ssh_key_path.name.lower()
+    )
+    if use_subprocess:
+        from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
+    else:
+        from .remote import RemoteExecutor as RemoteExecutorClass
+
+    with RemoteExecutorClass(remote_config) as executor:
         # Check if MP3 already exists on remote
         mp3_filename = generate_filename(video_title, ".mp3")
         remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
@@ -348,7 +357,16 @@ def execute_remote_transcription(
     """Execute transcription on remote host and download transcript back."""
     print(f"Connecting to remote host: {remote_config.host}")
 
-    with RemoteExecutor(remote_config) as executor:
+    # Determine which executor to use
+    use_subprocess = (
+        remote_config.ssh_key_path and "_sk" in remote_config.ssh_key_path.name.lower()
+    )
+    if use_subprocess:
+        from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
+    else:
+        from .remote import RemoteExecutor as RemoteExecutorClass
+
+    with RemoteExecutorClass(remote_config) as executor:
         transcript_filename = generate_filename(video_title, ".txt", is_transcript=True)
         remote_transcript_path = (
             f"{remote_config.path}/Attachments/{transcript_filename}"
@@ -437,7 +455,16 @@ def execute_remote_summarize(args, remote_config, transcript_path, video_title):
     """Execute summarization on remote host and download result."""
     print(f"Connecting to remote host: {remote_config.host}")
 
-    with RemoteExecutor(remote_config) as executor:
+    # Determine which executor to use
+    use_subprocess = (
+        remote_config.ssh_key_path and "_sk" in remote_config.ssh_key_path.name.lower()
+    )
+    if use_subprocess:
+        from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
+    else:
+        from .remote import RemoteExecutor as RemoteExecutorClass
+
+    with RemoteExecutorClass(remote_config) as executor:
         # Upload transcript to remote
         remote_transcript_path = f"{remote_config.path}/tmp/{transcript_path.name}"
 
@@ -667,6 +694,22 @@ def main():
     remote_config = None
     if args.remote_download or args.remote_transcription or args.remote_summarize:
         remote_config = resolve_remote_config(args, None)
+
+    # Determine which remote executor to use based on key type
+    use_subprocess_ssh = False
+    if remote_config and remote_config.ssh_key_path:
+        key_name = remote_config.ssh_key_path.name.lower()
+        if "_sk" in key_name:
+            use_subprocess_ssh = True
+            print(
+                f"Using subprocess SSH for hardware key: {remote_config.ssh_key_path}"
+            )
+
+    # Import the appropriate executor
+    if use_subprocess_ssh:
+        from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
+    else:
+        from .remote import RemoteExecutor as RemoteExecutorClass
 
     # Phase 1: Download
     if args.from_youtube:
