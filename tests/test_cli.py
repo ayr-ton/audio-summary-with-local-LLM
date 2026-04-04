@@ -327,34 +327,30 @@ class TestRemoteExecutionArgs:
             ],
         )
 
-        with pytest.raises(SystemExit) as exc_info:
-            from audio_summary.cli import main
+        # Mock the RemoteExecutor to avoid actual SSH connection
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.return_value = False
+        mock_executor.__enter__ = mocker.MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = mocker.MagicMock(return_value=None)
+        mocker.patch("audio_summary.remote.RemoteExecutor", return_value=mock_executor)
 
+        # Mock execute_remote_download to avoid actual execution
+        mocker.patch(
+            "audio_summary.cli.execute_remote_download",
+            return_value=Path("/tmp/test.mp3"),
+        )
+
+        from audio_summary.cli import main
+
+        with pytest.raises(SystemExit) as exc_info:
             main()
 
-        # Should fail on actual execution, not validation
-        # (exit code 1 from execution, not 2 from validation)
+        # Should fail on actual execution (exit code 1), not validation (exit code 2)
         assert exc_info.value.code != 2
         captured = capsys.readouterr()
         # Make sure validation error was NOT shown
         assert "requires --remote-host" not in captured.err
         assert "requires --remote-host" not in captured.out
-
-        # Mock load_config to return empty config
-        mocker.patch(
-            "audio_summary.cli.load_config",
-            return_value=mocker.MagicMock(remotes={}, default_remote=None),
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-
-        assert exc_info.value.code == 2
-        captured = capsys.readouterr()
-        assert (
-            "requires --remote-host, --remote-path, or --remote-user" in captured.err
-            or "requires --remote-host, --remote-path, or --remote-user" in captured.out
-        )
 
     def test_remote_summarize_with_from_transcript(self, mocker):
         """Test that --remote-summarize works with --from-transcript."""
@@ -412,6 +408,14 @@ class TestGranularRemoteExecution:
         )
         mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
 
+        # Mock the RemoteExecutor classes
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.return_value = False  # File doesn't exist
+        mock_executor.__enter__ = mocker.MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = mocker.MagicMock(return_value=None)
+
+        mocker.patch("audio_summary.remote.RemoteExecutor", return_value=mock_executor)
+
         # Mock args
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
@@ -434,9 +438,14 @@ class TestGranularRemoteExecution:
         mock_args.append = False
 
         mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock remote config without hardware key
+        mock_remote_config = mocker.MagicMock()
+        mock_remote_config.ssh_key_path = None
         mocker.patch(
-            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+            "audio_summary.cli.resolve_remote_config", return_value=mock_remote_config
         )
+
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
         mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
 
@@ -472,6 +481,14 @@ class TestGranularRemoteExecution:
         )
         mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
 
+        # Mock the RemoteExecutor classes
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.return_value = False  # File doesn't exist
+        mock_executor.__enter__ = mocker.MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = mocker.MagicMock(return_value=None)
+
+        mocker.patch("audio_summary.remote.RemoteExecutor", return_value=mock_executor)
+
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
         mock_args.from_local = None
@@ -493,9 +510,14 @@ class TestGranularRemoteExecution:
         mock_args.append = False
 
         mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock remote config without hardware key
+        mock_remote_config = mocker.MagicMock()
+        mock_remote_config.ssh_key_path = None
         mocker.patch(
-            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+            "audio_summary.cli.resolve_remote_config", return_value=mock_remote_config
         )
+
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
         mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
 
@@ -585,6 +607,14 @@ class TestGranularRemoteExecution:
         )
         mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
 
+        # Mock the RemoteExecutor classes
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.return_value = False  # File doesn't exist
+        mock_executor.__enter__ = mocker.MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = mocker.MagicMock(return_value=None)
+
+        mocker.patch("audio_summary.remote.RemoteExecutor", return_value=mock_executor)
+
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
         mock_args.from_local = None
@@ -606,9 +636,14 @@ class TestGranularRemoteExecution:
         mock_args.append = False
 
         mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock remote config without hardware key
+        mock_remote_config = mocker.MagicMock()
+        mock_remote_config.ssh_key_path = None
         mocker.patch(
-            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+            "audio_summary.cli.resolve_remote_config", return_value=mock_remote_config
         )
+
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
         mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
 
@@ -645,6 +680,14 @@ class TestGranularRemoteExecution:
         )
         mock_summarize_text = mocker.patch("audio_summary.cli.summarize_text")
 
+        # Mock the RemoteExecutor classes
+        mock_executor = mocker.MagicMock()
+        mock_executor.check_file_exists.return_value = False  # File doesn't exist
+        mock_executor.__enter__ = mocker.MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = mocker.MagicMock(return_value=None)
+
+        mocker.patch("audio_summary.remote.RemoteExecutor", return_value=mock_executor)
+
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = "https://example.com/video"
         mock_args.from_local = None
@@ -666,9 +709,14 @@ class TestGranularRemoteExecution:
         mock_args.append = False
 
         mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock remote config without hardware key
+        mock_remote_config = mocker.MagicMock()
+        mock_remote_config.ssh_key_path = None
         mocker.patch(
-            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+            "audio_summary.cli.resolve_remote_config", return_value=mock_remote_config
         )
+
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
         mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
 

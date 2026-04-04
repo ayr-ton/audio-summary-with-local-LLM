@@ -301,16 +301,33 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
         from .remote import RemoteExecutor as RemoteExecutorClass
 
     with RemoteExecutorClass(remote_config) as executor:
-        # Check if MP3 already exists on remote
+        # Check if MP3 already exists on remote (in Attachments or tmp directory)
         mp3_filename = generate_filename(video_title, ".mp3")
-        remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
+        remote_mp3_path_attachments = f"{remote_config.path}/Attachments/{mp3_filename}"
+        remote_mp3_path_tmp = f"{remote_config.path}/tmp/{mp3_filename}"
+
+        remote_mp3_path = None
+        mp3_exists = False
 
         if args.dry_run:
-            print(f"[DRY-RUN] Would check if {remote_mp3_path} exists")
+            print(f"[DRY-RUN] Would check if MP3 exists on remote")
         else:
-            if executor.check_file_exists(remote_mp3_path):
-                print(f"MP3 already exists on remote: {remote_mp3_path}")
+            # Check Attachments first
+            if executor.check_file_exists(remote_mp3_path_attachments):
+                print(
+                    f"MP3 already exists on remote (Attachments): {remote_mp3_path_attachments}"
+                )
+                remote_mp3_path = remote_mp3_path_attachments
+                mp3_exists = True
+            # Check tmp directory
+            elif executor.check_file_exists(remote_mp3_path_tmp):
+                print(f"MP3 already exists on remote (tmp): {remote_mp3_path_tmp}")
+                remote_mp3_path = remote_mp3_path_tmp
+                mp3_exists = True
             else:
+                remote_mp3_path = remote_mp3_path_attachments
+
+            if not mp3_exists:
                 # Execute download on remote
                 cmd = f"uv run audio-summary --from-youtube '{args.from_youtube}' --transcript-only --output /dev/null"
                 if args.dry_run:
