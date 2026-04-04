@@ -1,3 +1,4 @@
+[![CI](https://github.com/ayr-ton/audio-summary-with-local-LLM/actions/workflows/ci.yml/badge.svg)](https://github.com/ayr-ton/audio-summary-with-local-LLM/actions/workflows/ci.yml)
 # Audio Summary with Local LLM
 
 This tool is designed to provide a quick and concise summary of audio and video files. It supports summarizing content either from a local file or directly from YouTube. The tool uses Whisper for transcription and a local LLM (via Ollama) for generating summaries. The default model is `gpt-oss:120b`.
