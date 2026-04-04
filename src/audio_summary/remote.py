@@ -27,12 +27,41 @@ class RemoteExecutor:
         connect_kwargs = {
             "hostname": self.config.host,
             "username": self.config.user,
+            "allow_agent": False,  # Disable SSH agent to avoid public_blob errors
+            "look_for_keys": False,  # Don't look for keys in default locations
         }
 
         if self.config.ssh_key_path:
             connect_kwargs["key_filename"] = str(self.config.ssh_key_path)
+        else:
+            # If no key specified, try to use SSH agent but catch errors
+            connect_kwargs["allow_agent"] = True
+            connect_kwargs["look_for_keys"] = True
 
-        self._ssh.connect(**connect_kwargs)
+        try:
+            self._ssh.connect(**connect_kwargs)
+        except AttributeError as e:
+            if "public_blob" in str(e):
+                # Retry without agent if public_blob error occurs
+                print(
+                    "Retrying connection without SSH agent due to key compatibility issue..."
+                )
+                connect_kwargs["allow_agent"] = False
+                connect_kwargs["look_for_keys"] = False
+                # Try to find a key file
+                for key_file in [
+                    "~/.ssh/id_ed25519",
+                    "~/.ssh/id_rsa",
+                    "~/.ssh/id_ecdsa",
+                ]:
+                    key_path = Path(key_file).expanduser()
+                    if key_path.exists():
+                        connect_kwargs["key_filename"] = str(key_path)
+                        break
+                self._ssh.connect(**connect_kwargs)
+            else:
+                raise
+
         self._sftp = self._ssh.open_sftp()
 
     def disconnect(self) -> None:
