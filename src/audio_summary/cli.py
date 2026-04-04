@@ -9,10 +9,32 @@ import sys
 import re
 from datetime import datetime
 
+from .config import load_config, create_remote_config, RemoteConfig
+from .remote import RemoteExecutor
+from .progress import create_file_progress_bar
+
 OLLAMA_MODEL = "gpt-oss:20b"
 WHISPER_MODEL = "openai/whisper-large-v2"
 WHISPER_LANGUAGE = "en"
 MAX_TITLE_LENGTH = 80
+
+
+def resolve_remote_config(args, remote_name: str | None = None) -> RemoteConfig:
+    """Resolve remote configuration from args or config file."""
+    config = load_config()
+
+    # If ad-hoc parameters are provided, use them
+    if args.remote_host:
+        return create_remote_config(
+            host=args.remote_host,
+            user=args.remote_user or "tom",  # Default user
+            path=args.remote_path
+            or "/home/tom/github.com/ayr-ton/audio-summary-with-local-LLM",
+            max_retries=3,
+        )
+
+    # Otherwise use config file
+    return config.get_remote(remote_name)
 
 
 def sanitize_title(title: str) -> str:
@@ -265,6 +287,175 @@ def ask_question_from_text(text: str, question: str) -> str:
     return clean_thinking_chunks(response["message"]["content"])
 
 
+def execute_remote_transcription(args, remote_config, video_title):
+    """Execute download and transcription on remote host."""
+    print(f"Connecting to remote host: {remote_config.host}")
+
+    with RemoteExecutor(remote_config) as executor:
+        # Check if MP3 already exists on remote
+        mp3_filename = generate_filename(video_title, ".mp3")
+        remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
+
+        if args.dry_run:
+            print(f"[DRY-RUN] Would check if {remote_mp3_path} exists")
+        else:
+            if executor.check_file_exists(remote_mp3_path):
+                print(f"MP3 already exists on remote: {remote_mp3_path}")
+            else:
+                # Execute download on remote
+                cmd = f"uv run audio-summary --from-youtube '{args.from_youtube}' --transcript-only --output /dev/null"
+                if args.dry_run:
+                    print(f"[DRY-RUN] Would execute: {cmd}")
+                else:
+                    print("Executing download on remote...")
+                    success, stdout, stderr = executor.execute_with_retry(
+                        cmd, cwd=remote_config.path, dry_run=args.dry_run
+                    )
+                    if not success:
+                        print(f"Remote execution failed: {stderr}")
+                        sys.exit(1)
+                    print("Download complete on remote")
+
+        # Check if transcript already exists
+        transcript_filename = generate_filename(video_title, ".txt", is_transcript=True)
+        remote_transcript_path = (
+            f"{remote_config.path}/Attachments/{transcript_filename}"
+        )
+        local_transcript_path = Path("Attachments") / transcript_filename
+
+        if args.dry_run:
+            print(f"[DRY-RUN] Would check if {remote_transcript_path} exists")
+        elif executor.check_file_exists(remote_transcript_path):
+            print(f"Transcript already exists on remote: {remote_transcript_path}")
+        else:
+            # Execute transcription on remote
+            mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
+            cmd = f"uv run audio-summary --from-local 'Attachments/{mp3_filename}' --transcript-only"
+            if args.dry_run:
+                print(f"[DRY-RUN] Would execute: {cmd}")
+            else:
+                print("Executing transcription on remote...")
+                success, stdout, stderr = executor.execute_with_retry(
+                    cmd, cwd=remote_config.path, dry_run=args.dry_run
+                )
+                if not success:
+                    print(f"Remote transcription failed: {stderr}")
+                    sys.exit(1)
+                print("Transcription complete on remote")
+
+        # Download files from remote
+        print("Downloading files from remote...")
+
+        if args.dry_run:
+            print(f"[DRY-RUN] Would download {remote_mp3_path} to Attachments/")
+            print(f"[DRY-RUN] Would download {remote_transcript_path} to Attachments/")
+        else:
+            # Ensure local Attachments directory exists
+            local_attachments = Path("Attachments")
+            local_attachments.mkdir(parents=True, exist_ok=True)
+
+            # Get file sizes for progress bars
+            mp3_size = executor.get_file_size(remote_mp3_path)
+            transcript_size = executor.get_file_size(remote_transcript_path)
+
+            # Download MP3 with progress
+            if mp3_size > 0:
+                progress = create_file_progress_bar(mp3_filename, mp3_size)
+                executor.download_file(
+                    remote_mp3_path,
+                    local_attachments / mp3_filename,
+                    progress_bar=progress,
+                    dry_run=args.dry_run,
+                )
+
+            # Download transcript with progress
+            if transcript_size > 0:
+                progress = create_file_progress_bar(
+                    transcript_filename, transcript_size
+                )
+                executor.download_file(
+                    remote_transcript_path,
+                    local_attachments / transcript_filename,
+                    progress_bar=progress,
+                    dry_run=args.dry_run,
+                )
+
+            print(f"Files downloaded to: {local_attachments}")
+            return local_attachments / transcript_filename
+
+
+def execute_remote_summarize(args, remote_config, transcript_path, video_title):
+    """Execute summarization on remote host and download result."""
+    print(f"Connecting to remote host: {remote_config.host}")
+
+    with RemoteExecutor(remote_config) as executor:
+        # Upload transcript to remote
+        remote_transcript_path = f"{remote_config.path}/tmp/{transcript_path.name}"
+
+        if args.dry_run:
+            print(
+                f"[DRY-RUN] Would upload {transcript_path} to {remote_transcript_path}"
+            )
+        else:
+            # Ensure remote tmp directory exists
+            executor.execute(
+                "mkdir -p tmp", cwd=remote_config.path, dry_run=args.dry_run
+            )
+
+            # Upload with progress
+            file_size = transcript_path.stat().st_size
+            progress = create_file_progress_bar(transcript_path.name, file_size)
+            executor.upload_file(
+                transcript_path,
+                remote_transcript_path,
+                progress_bar=progress,
+                dry_run=args.dry_run,
+            )
+            print(f"Transcript uploaded to remote: {remote_transcript_path}")
+
+        # Execute summarization on remote
+        cmd = f"uv run audio-summary --from-transcript 'tmp/{transcript_path.name}'"
+        if args.research:
+            cmd += " --research"
+
+        if args.dry_run:
+            print(f"[DRY-RUN] Would execute: {cmd}")
+        else:
+            print("Executing summarization on remote...")
+            success, stdout, stderr = executor.execute_with_retry(
+                cmd, cwd=remote_config.path, dry_run=args.dry_run
+            )
+            if not success:
+                print(f"Remote summarization failed: {stderr}")
+                sys.exit(1)
+            print("Summarization complete on remote")
+
+        # Download markdown from remote
+        md_filename = generate_filename(video_title, ".md")
+        remote_md_path = f"{remote_config.path}/{md_filename}"
+        local_md_path = Path(md_filename)
+
+        if args.dry_run:
+            print(f"[DRY-RUN] Would download {remote_md_path} to {local_md_path}")
+            return local_md_path
+        else:
+            # Download with progress
+            md_size = executor.get_file_size(remote_md_path)
+            if md_size > 0:
+                progress = create_file_progress_bar(md_filename, md_size)
+                executor.download_file(
+                    remote_md_path,
+                    local_md_path,
+                    progress_bar=progress,
+                    dry_run=args.dry_run,
+                )
+                print(f"Markdown downloaded to: {local_md_path}")
+                return local_md_path
+            else:
+                print("Warning: Markdown file not found on remote or is empty")
+                return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Download, transcribe, summarize, or query audio/video/text files."
@@ -316,6 +507,45 @@ def main():
         help="Ask a specific question about the transcript (only valid with --from-transcript).",
     )
 
+    # Remote execution arguments
+    parser.add_argument(
+        "--remote",
+        nargs="?",
+        const=True,
+        metavar="NAME",
+        help="Use remote execution (optionally specify remote name from config)",
+    )
+    parser.add_argument(
+        "--remote-transcribe",
+        action="store_true",
+        help="Execute download+transcribe on remote, sync results back",
+    )
+    parser.add_argument(
+        "--remote-summarize",
+        action="store_true",
+        help="Execute summarization on remote Ollama, sync markdown back",
+    )
+    parser.add_argument(
+        "--remote-host",
+        type=str,
+        help="Ad-hoc: specify remote host (overrides config)",
+    )
+    parser.add_argument(
+        "--remote-path",
+        type=str,
+        help="Ad-hoc: specify remote path (overrides config)",
+    )
+    parser.add_argument(
+        "--remote-user",
+        type=str,
+        help="Ad-hoc: specify remote user (overrides config)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be executed without running",
+    )
+
     args = parser.parse_args()
 
     # Argument validation
@@ -325,6 +555,19 @@ def main():
         parser.error("--research cannot be used with --with-prompt.")
     if args.transcript_only and args.from_transcript:
         print("Warning: --transcript-only has no effect when using --from-transcript.")
+
+    # Remote execution validation
+    if args.remote or args.remote_host:
+        if not (args.remote_transcribe or args.remote_summarize):
+            parser.error(
+                "--remote requires either --remote-transcribe or --remote-summarize"
+            )
+        if args.remote_transcribe and args.remote_summarize:
+            parser.error("Cannot use both --remote-transcribe and --remote-summarize")
+        if args.remote_transcribe and args.from_transcript:
+            parser.error("--remote-transcribe cannot be used with --from-transcript")
+        if args.remote_summarize and not args.from_transcript:
+            parser.error("--remote-summarize requires --from-transcript")
 
     # Determine language setting
     language = args.language if args.language else WHISPER_LANGUAGE
@@ -347,6 +590,68 @@ def main():
     audio_file_path = None
     video_title = None
     llm_result = None
+
+    # Remote execution handling
+    if args.remote or args.remote_host:
+        remote_name = args.remote if isinstance(args.remote, str) else None
+        remote_config = resolve_remote_config(args, remote_name)
+
+        if args.remote_transcribe and args.from_youtube:
+            print(f"Downloading YouTube video from {args.from_youtube}")
+            try:
+                # Get title first
+                video_title = (
+                    args.title
+                    or get_youtube_title(args.from_youtube)
+                    or "Unknown Video"
+                )
+
+                # Execute remotely and get transcript path
+                transcript_path = execute_remote_transcription(
+                    args, remote_config, video_title
+                )
+
+                if args.transcript_only:
+                    print(
+                        f"Transcription complete. Transcript saved to {transcript_path}"
+                    )
+                    return
+
+            except Exception as e:
+                print(f"Error during remote execution: {e}")
+                sys.exit(1)
+        elif args.remote_summarize and args.from_transcript:
+            transcript_file_path = Path(args.from_transcript)
+            if not transcript_file_path.is_file():
+                print(f"Error: Transcript file not found at {transcript_file_path}")
+                sys.exit(1)
+
+            try:
+                # Extract title from transcript filename
+                if args.title:
+                    video_title = args.title
+                else:
+                    stem = transcript_file_path.stem
+                    if "_transcript" in stem:
+                        video_title = (
+                            stem.replace("_transcript", "").split(" ", 2)[-1]
+                            if " " in stem
+                            else stem
+                        )
+                    else:
+                        video_title = stem
+
+                # Execute summarization remotely
+                md_path = execute_remote_summarize(
+                    args, remote_config, transcript_file_path, video_title
+                )
+                if md_path:
+                    print(f"Summary saved to: {md_path}")
+                return
+
+            except Exception as e:
+                print(f"Error during remote summarization: {e}")
+                sys.exit(1)
 
     # Input Processing
     if args.from_youtube:
