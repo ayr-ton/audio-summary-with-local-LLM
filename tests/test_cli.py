@@ -313,8 +313,8 @@ class TestRemoteExecutionArgs:
             in captured.out
         )
 
-    def test_remote_flags_require_remote_config(self, mocker, capsys):
-        """Test that remote flags require remote configuration."""
+    def test_remote_download_with_remote_config(self, mocker, capsys):
+        """Test that --remote-download with remote config doesn't error on validation."""
         mocker.patch(
             "sys.argv",
             [
@@ -322,12 +322,31 @@ class TestRemoteExecutionArgs:
                 "--from-youtube",
                 "https://example.com/video",
                 "--remote-download",
+                "--remote-host",
+                "test.local",
             ],
         )
 
         with pytest.raises(SystemExit) as exc_info:
             from audio_summary.cli import main
 
+            main()
+
+        # Should fail on actual execution, not validation
+        # (exit code 1 from execution, not 2 from validation)
+        assert exc_info.value.code != 2
+        captured = capsys.readouterr()
+        # Make sure validation error was NOT shown
+        assert "requires --remote-host" not in captured.err
+        assert "requires --remote-host" not in captured.out
+
+        # Mock load_config to return empty config
+        mocker.patch(
+            "audio_summary.cli.load_config",
+            return_value=mocker.MagicMock(remotes={}, default_remote=None),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
             main()
 
         assert exc_info.value.code == 2
@@ -502,16 +521,19 @@ class TestGranularRemoteExecution:
         # Verify remote download was NOT called
         mock_execute_remote_download.assert_not_called()
 
-    def test_remote_summarize_only(self, mocker):
+    def test_remote_summarize_only(self, mocker, tmp_path):
         """Test --remote-summarize executes summarization on remote only."""
-        mock_execute_remote_summarize = mocker.patch(
-            "audio_summary.cli.execute_remote_summarize"
-        )
+        from audio_summary.cli import main, execute_remote_summarize
 
+        # Create a real transcript file
+        transcript_file = tmp_path / "transcript.txt"
+        transcript_file.write_text("Test transcript content")
+
+        # Mock all the things
         mock_args = mocker.MagicMock()
         mock_args.from_youtube = None
         mock_args.from_local = None
-        mock_args.from_transcript = "transcript.txt"
+        mock_args.from_transcript = str(transcript_file)
         mock_args.remote_download = False
         mock_args.remote_transcription = False
         mock_args.remote_summarize = True
@@ -529,22 +551,18 @@ class TestGranularRemoteExecution:
         mock_args.append = False
 
         mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock remote config with proper ssh_key_path
+        mock_remote_config = mocker.MagicMock()
+        mock_remote_config.ssh_key_path = None
         mocker.patch(
-            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+            "audio_summary.cli.resolve_remote_config", return_value=mock_remote_config
         )
         mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
 
-        mock_path = mocker.MagicMock()
-        mock_path.is_file.return_value = True
-        mock_path.stat.return_value = mocker.MagicMock(st_size=1000)
-        mock_path.stem = "2024-01-01 Test Video_transcript"
-        mock_path.name = "2024-01-01 Test Video_transcript.txt"
-
-        mocker.patch("pathlib.Path", return_value=mock_path)
-
-        mock_execute_remote_summarize.return_value = Path("./2024-01-01 Test Video.md")
-
-        from audio_summary.cli import main
+        # Mock the actual execution function
+        mock_summarize = mocker.patch("audio_summary.cli.execute_remote_summarize")
+        mock_summarize.return_value = tmp_path / "summary.md"
 
         try:
             main()
@@ -552,7 +570,7 @@ class TestGranularRemoteExecution:
             pass
 
         # Verify remote summarize was called
-        mock_execute_remote_summarize.assert_called_once()
+        mock_summarize.assert_called_once()
 
     def test_remote_transcribe_shorthand_workflow(self, mocker):
         """Test that --remote-transcribe shorthand works correctly."""
