@@ -753,9 +753,12 @@ def main():
         )
 
         if args.remote_download:
-            # Check if MP3 already exists on remote before downloading
+            # Check if MP3 already exists on remote before downloading (in both Attachments and tmp)
             mp3_filename = generate_filename(video_title, ".mp3")
-            remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
+            remote_mp3_path_attachments = (
+                f"{remote_config.path}/Attachments/{mp3_filename}"
+            )
+            remote_mp3_path_tmp = f"{remote_config.path}/tmp/{mp3_filename}"
 
             # Determine which executor to use for checking
             if use_subprocess_ssh:
@@ -764,8 +767,18 @@ def main():
                 from .remote import RemoteExecutor as RemoteExecutorClass
 
             with RemoteExecutorClass(remote_config) as executor:
-                if executor.check_file_exists(remote_mp3_path):
-                    print(f"MP3 already exists on remote: {remote_mp3_path}")
+                # Check both Attachments and tmp directories
+                remote_mp3_path = None
+                if executor.check_file_exists(remote_mp3_path_attachments):
+                    remote_mp3_path = remote_mp3_path_attachments
+                    print(
+                        f"MP3 already exists on remote (Attachments): {remote_mp3_path}"
+                    )
+                elif executor.check_file_exists(remote_mp3_path_tmp):
+                    remote_mp3_path = remote_mp3_path_tmp
+                    print(f"MP3 already exists on remote (tmp): {remote_mp3_path}")
+
+                if remote_mp3_path:
                     print("Skipping download on remote.")
                     # Download existing file from remote
                     print("Downloading existing MP3 from remote...")
@@ -863,12 +876,15 @@ def main():
     if not transcript and audio_file_path:
         try:
             if args.remote_transcription:
-                # Check if transcript already exists on remote
+                # Check if transcript already exists on remote (in both Attachments and tmp)
                 transcript_filename = generate_filename(
                     video_title, ".txt", is_transcript=True
                 )
-                remote_transcript_path = (
+                remote_transcript_path_attachments = (
                     f"{remote_config.path}/Attachments/{transcript_filename}"
+                )
+                remote_transcript_path_tmp = (
+                    f"{remote_config.path}/tmp/{transcript_filename}"
                 )
 
                 # Determine which executor to use
@@ -878,10 +894,20 @@ def main():
                     from .remote import RemoteExecutor as RemoteExecutorClass
 
                 with RemoteExecutorClass(remote_config) as executor:
-                    if executor.check_file_exists(remote_transcript_path):
+                    # Check both Attachments and tmp directories
+                    remote_transcript_path = None
+                    if executor.check_file_exists(remote_transcript_path_attachments):
+                        remote_transcript_path = remote_transcript_path_attachments
                         print(
-                            f"Transcript already exists on remote: {remote_transcript_path}"
+                            f"Transcript already exists on remote (Attachments): {remote_transcript_path}"
                         )
+                    elif executor.check_file_exists(remote_transcript_path_tmp):
+                        remote_transcript_path = remote_transcript_path_tmp
+                        print(
+                            f"Transcript already exists on remote (tmp): {remote_transcript_path}"
+                        )
+
+                    if remote_transcript_path:
                         print("Skipping transcription on remote.")
                         # Download existing transcript
                         transcript_size = executor.get_file_size(remote_transcript_path)
