@@ -1,21 +1,99 @@
 import ollama
 import argparse
 from pathlib import Path
+from typing import Any
 from transformers import pipeline
 import yt_dlp
 import torch
-import sys  # Added for exiting on argument error
+import sys
+import re
+from datetime import datetime
 
-OLLAMA_MODEL = "gpt-oss:120b"
+OLLAMA_MODEL = "gpt-oss:20b"
 WHISPER_MODEL = "openai/whisper-large-v2"
-WHISPER_LANGUAGE = "en"  # Set to desired language or None for auto-detection
+WHISPER_LANGUAGE = "en"
+MAX_TITLE_LENGTH = 80
 
 
-# Function to download a video from YouTube using yt-dlp
-def download_from_youtube(url: str, path: str):
+def sanitize_title(title: str) -> str:
+    """Sanitize title for use in filenames."""
+    # Remove special characters but keep spaces
+    sanitized = re.sub(r'[<>:"/\\|?*]', "", title)
+    # Replace multiple spaces with single space
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    # Strip leading/trailing whitespace
+    sanitized = sanitized.strip()
+    # Limit length
+    if len(sanitized) > MAX_TITLE_LENGTH:
+        sanitized = sanitized[:MAX_TITLE_LENGTH].rstrip()
+    return sanitized
+
+
+def get_youtube_title(url: str) -> str | None:
+    """Extract video title from YouTube URL using yt-dlp."""
+    try:
+        ydl_opts: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
+            info = ydl.extract_info(url, download=False)
+            return info.get("title") if info else None
+    except Exception:
+        return None
+
+
+def find_obsidian_attachments() -> Path | None:
+    """Check if we're in an Obsidian vault by looking for Attachments folder."""
+    current = Path.cwd()
+    # Check current directory and up to 3 parent levels
+    for _ in range(4):
+        attachments = current / "Attachments"
+        if attachments.exists() and attachments.is_dir():
+            return attachments
+        if current.parent == current:  # Reached root
+            break
+        current = current.parent
+    return None
+
+
+def clean_thinking_chunks(text: str) -> str:
+    """Remove thinking blocks from model output."""
+    # Remove thinking blocks (support both formats)
+    cleaned = re.sub(r"<\|thinking\|>.*?<\|/thinking\|>", "", text, flags=re.DOTALL)
+    # Also handle nested or alternative formats
+    cleaned = re.sub(r"<thinking>.*?</thinking>", "", cleaned, flags=re.DOTALL)
+    # Clean up excessive whitespace
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def generate_filename(title: str, extension: str, is_transcript: bool = False) -> str:
+    """Generate filename with date prefix."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    sanitized = sanitize_title(title)
+
+    if is_transcript:
+        return f"{today} {sanitized}_transcript{extension}"
+    else:
+        return f"{today} {sanitized}{extension}"
+
+
+def download_from_youtube(url: str, path: str, title: str | None = None) -> Path:
+    """Download a video from YouTube and return the audio file path."""
+    # Get title if not provided
+    if not title:
+        title = get_youtube_title(url) or "Unknown Video"
+
+    # Pass unsanitized title - generate_filename will sanitize it
+    filename_base = generate_filename(title, "", is_transcript=False)
+    # Remove extension from base for yt-dlp template
+    filename_base = Path(filename_base).stem
+
     ydl_opts = {
         "format": "bestaudio/best",
-        "outtmpl": str(Path(path) / "to_transcribe.%(ext)s"),
+        "outtmpl": str(Path(path) / f"{filename_base}.%(ext)s"),
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -24,23 +102,22 @@ def download_from_youtube(url: str, path: str):
             }
         ],
     }
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-    # Return the path to the downloaded file
-    # Find the downloaded mp3 file (yt-dlp might add metadata)
-    downloaded_files = list(Path(path).glob("to_transcribe.*.mp3"))
+
+    # Find the downloaded mp3 file
+    downloaded_files = list(Path(path).glob(f"{filename_base}.*.mp3"))
     if not downloaded_files:
-        downloaded_files = list(
-            Path(path).glob("to_transcribe.mp3")
-        )  # Fallback if no metadata added
+        downloaded_files = list(Path(path).glob(f"{filename_base}.mp3"))
+
     if downloaded_files:
         return downloaded_files[0]
     else:
         raise FileNotFoundError(f"Could not find downloaded audio file in {path}")
 
 
-# Function to get the best available device
-def get_device():
+def get_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     elif torch.cuda.is_available():
@@ -49,29 +126,23 @@ def get_device():
         return "cpu"
 
 
-# Function to transcribe an audio file using the transformers pipeline
 def transcribe_file(
     file_path: str, output_file: str, language: str | None = None
 ) -> str:
-    # Get the best available device
     device = get_device()
     print(f"Using device: {device} for transcription")
 
-    # Load the pipeline model for automatic speech recognition
     transcriber = pipeline(
         "automatic-speech-recognition",
         model=WHISPER_MODEL,
         device=device,
-        chunk_length_s=30,  # Process in 30-second chunks
-        return_timestamps=True,  # Enable timestamp generation for longer audio
+        chunk_length_s=30,
+        return_timestamps=True,
     )
 
-    # Transcribe the audio file
-    # For CPU, we might want to use a smaller model or chunk the audio if memory is an issue
     if device == "cpu":
         print("Warning: Using CPU for transcription. This may be slow.")
 
-    # Set up generation keyword arguments including language
     generate_kwargs = {}
     if language and language.lower() != "auto":
         generate_kwargs["language"] = language
@@ -79,48 +150,37 @@ def transcribe_file(
     else:
         print("Using automatic language detection")
 
-    # Transcribe the audio file
     print(
         f"Starting transcription for {file_path} (this may take a while for longer files)..."
     )
     transcribe = transcriber(file_path, generate_kwargs=generate_kwargs)
 
-    # Extract the full text from the chunked transcription
     if (
         isinstance(transcribe, dict)
         and "text" in transcribe
         and "chunks" not in transcribe
     ):
-        # Simple case - just one chunk/result
         full_text = transcribe["text"]
     elif isinstance(transcribe, dict) and "chunks" in transcribe:
-        # Multiple chunks with timestamps
         full_text = " ".join([chunk["text"].strip() for chunk in transcribe["chunks"]])
     elif isinstance(transcribe, str):
-        # Some pipeline versions might just return a string
         full_text = transcribe
     else:
-        # Fallback for other potential return formats
         full_text = (
             transcribe["text"]
             if isinstance(transcribe, dict) and "text" in transcribe
             else str(transcribe)
         )
 
-    # Save the transcribed text to the specified temporary file
     with open(output_file, "w") as tmp_file:
         tmp_file.write(full_text)
         print(f"Transcription saved to file: {output_file}")
 
-    # Return the transcribed text
     return full_text
 
 
-# Function to summarize a text using the Ollama model
 def summarize_text(text: str) -> str:
-    # Define the system prompt for the Ollama model
     system_prompt = "You are a helpful assistant designed to summarize text accurately and concisely."
-    # Define the user prompt for the Ollama model
     user_prompt = f"""Generate a concise summary of the text below.
     Text : {text}
     Add a title to the summary using markdown H1 (# Title).
@@ -129,29 +189,62 @@ def summarize_text(text: str) -> str:
     and finish your summary with a concluding sentence."""
 
     print(f"Sending request to Ollama ({OLLAMA_MODEL}) for summarization...")
-    # Use the Ollama model to generate a summary
     response = ollama.chat(
         model=OLLAMA_MODEL,
         messages=[
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
-            {
-                "role": "user",
-                "content": user_prompt,
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
     )
-    # Return the generated summary
-    return response["message"]["content"]
+    return clean_thinking_chunks(response["message"]["content"])
 
 
-# Function to ask a specific question about a text using the Ollama model
+def research_text(text: str) -> str:
+    """Generate a comprehensive research-style analysis of the text."""
+    system_prompt = """You are a research analyst designed to provide comprehensive, detailed analysis of content.
+    Your analysis should be thorough, well-structured, and insightful."""
+
+    user_prompt = f"""Provide a comprehensive research-style analysis of the text below. Structure your analysis with the following sections:
+
+    # [Create an appropriate title based on the content]
+    
+    ## Overview
+    Provide a brief but informative overview of what this content is about and its significance.
+    
+    ## Key Concepts
+    Identify and explain the main concepts, ideas, and themes discussed. Use bullet points for clarity.
+    
+    ## Detailed Analysis
+    Dive deep into the content. Explain the arguments, methodologies, findings, or narrative in detail. 
+    Break this into subsections if there are multiple distinct topics or themes.
+    
+    ## Connections and Implications
+    Discuss how this content relates to broader contexts, field of study, or real-world applications. 
+    What are the implications of what's discussed?
+    
+    ## Key Takeaways
+    Summarize the most important points that someone should remember from this content.
+    
+    ---
+    
+    Text to analyze:
+    {text}
+    
+    Make your analysis insightful, accurate, and comprehensive."""
+
+    print(f"Sending request to Ollama ({OLLAMA_MODEL}) for research analysis...")
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    return clean_thinking_chunks(response["message"]["content"])
+
+
 def ask_question_from_text(text: str, question: str) -> str:
-    # Define the system prompt for the Ollama model
     system_prompt = "You are a helpful assistant. Answer the user's question based *only* on the provided text context."
-    # Define the user prompt for the Ollama model
     user_prompt = f"""Based on the text below, please answer the following question.
     Text:
     ---
@@ -162,26 +255,17 @@ def ask_question_from_text(text: str, question: str) -> str:
     """
 
     print(f"Sending request to Ollama ({OLLAMA_MODEL}) to answer question...")
-    # Use the Ollama model to generate an answer
     response = ollama.chat(
         model=OLLAMA_MODEL,
         messages=[
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
-            {
-                "role": "user",
-                "content": user_prompt,
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
     )
-    # Return the generated answer
-    return response["message"]["content"]
+    return clean_thinking_chunks(response["message"]["content"])
 
 
 def main():
-    # Parse command line arguments
     parser = argparse.ArgumentParser(
         description="Download, transcribe, summarize, or query audio/video/text files."
     )
@@ -200,6 +284,16 @@ def main():
 
     parser.add_argument(
         "--output", type=str, default="./summary.md", help="Output markdown file path."
+    )
+    parser.add_argument(
+        "--title",
+        type=str,
+        help="Custom title to use for file naming (for local files or override YouTube title).",
+    )
+    parser.add_argument(
+        "--research",
+        action="store_true",
+        help="Generate a detailed research analysis instead of a concise summary.",
     )
     parser.add_argument(
         "--append",
@@ -224,69 +318,87 @@ def main():
 
     args = parser.parse_args()
 
-    # --- Argument Validation ---
+    # Argument validation
     if args.with_prompt and not args.from_transcript:
         parser.error("--with-prompt can only be used with --from-transcript.")
+    if args.research and args.with_prompt:
+        parser.error("--research cannot be used with --with-prompt.")
     if args.transcript_only and args.from_transcript:
         print("Warning: --transcript-only has no effect when using --from-transcript.")
-        # Allow execution to continue, as the user might just want the transcript copied or validated.
-        # Or you could choose to exit:
-        # parser.error("--transcript-only cannot be used with --from-transcript.")
 
-    # --- Setup ---
     # Determine language setting
     language = args.language if args.language else WHISPER_LANGUAGE
     if language and language.lower() == "auto":
-        language = None  # None triggers automatic language detection in Whisper
+        language = None
 
-    # Set up temporary data directory
-    data_directory = Path("tmp")
-    # Check if the directory exists, if not, create it
-    if not data_directory.exists():
-        data_directory.mkdir(parents=True)
-        print(f"Created directory: {data_directory}")
+    # Check for Obsidian vault
+    attachments_dir = find_obsidian_attachments()
+    if attachments_dir:
+        print(f"Obsidian vault detected. Attachments folder: {attachments_dir}")
+        data_directory = attachments_dir
+    else:
+        data_directory = Path("tmp")
+        if not data_directory.exists():
+            data_directory.mkdir(parents=True)
+            print(f"Created directory: {data_directory}")
 
     transcript = None
-    transcript_source_path = (
-        data_directory / "transcript.txt"
-    )  # Default temp transcript path
-    output_title = "# Summary"  # Default title for the output file
-    llm_result = None  # To store the result from Ollama (summary or answer)
+    transcript_path = None
+    audio_file_path = None
+    video_title = None
+    llm_result = None
 
-    # --- Input Processing ---
+    # Input Processing
     if args.from_youtube:
-        # Download from YouTube
         print(f"Downloading YouTube video from {args.from_youtube}")
         try:
+            # Get title first
+            video_title = (
+                args.title or get_youtube_title(args.from_youtube) or "Unknown Video"
+            )
             audio_file_path = download_from_youtube(
-                args.from_youtube, str(data_directory)
+                args.from_youtube, str(data_directory), title=video_title
             )
             print(f"Audio downloaded to: {audio_file_path}")
+
+            # Generate transcript filename
+            transcript_filename = generate_filename(
+                sanitize_title(video_title), ".txt", is_transcript=True
+            )
+            transcript_path = data_directory / transcript_filename
+
             print(f"Transcribing file: {audio_file_path}")
             transcript = transcribe_file(
-                str(audio_file_path), str(transcript_source_path), language
+                str(audio_file_path), str(transcript_path), language
             )
         except Exception as e:
             print(f"Error during YouTube download or transcription: {e}")
             sys.exit(1)
 
     elif args.from_local:
-        # Use local file
         file_path = Path(args.from_local)
         if not file_path.is_file():
             print(f"Error: Local file not found at {file_path}")
             sys.exit(1)
+
+        # Use provided title or filename
+        video_title = args.title or file_path.stem
         print(f"Transcribing file: {file_path}")
+
         try:
-            transcript = transcribe_file(
-                str(file_path), str(transcript_source_path), language
+            # Generate transcript filename
+            transcript_filename = generate_filename(
+                sanitize_title(video_title), ".txt", is_transcript=True
             )
+            transcript_path = data_directory / transcript_filename
+
+            transcript = transcribe_file(str(file_path), str(transcript_path), language)
+            audio_file_path = file_path
         except Exception as e:
             print(f"Error during local file transcription: {e}")
             sys.exit(1)
 
     elif args.from_transcript:
-        # Use existing transcript file
         transcript_file_path = Path(args.from_transcript)
         if not transcript_file_path.is_file():
             print(f"Error: Transcript file not found at {transcript_file_path}")
@@ -295,47 +407,68 @@ def main():
             print(f"Reading transcript from: {transcript_file_path}")
             with open(transcript_file_path, "r") as f:
                 transcript = f.read()
-            transcript_source_path = (
-                transcript_file_path  # Update source path for reference
-            )
+            transcript_path = transcript_file_path
+
+            # Try to extract title from filename or use --title
+            if args.title:
+                video_title = args.title
+            else:
+                # Extract from filename pattern: "YYYY-MM-DD Title_transcript.txt"
+                stem = transcript_file_path.stem
+                if "_transcript" in stem:
+                    video_title = (
+                        stem.replace("_transcript", "").split(" ", 2)[-1]
+                        if " " in stem
+                        else stem
+                    )
+                else:
+                    video_title = stem
         except Exception as e:
             print(f"Error reading transcript file {transcript_file_path}: {e}")
             sys.exit(1)
 
-    # --- LLM Processing (Summarization or Question Answering) ---
+    # LLM Processing
     if transcript and not args.transcript_only:
         if args.with_prompt:
             print("Asking specific question...")
             try:
                 llm_result = ask_question_from_text(transcript, args.with_prompt)
-                output_title = f"# Answer to: {args.with_prompt}"
             except Exception as e:
                 print(f"Error getting answer from Ollama: {e}")
+                sys.exit(1)
+        elif args.research:
+            print("Generating research analysis...")
+            try:
+                llm_result = research_text(transcript)
+            except Exception as e:
+                print(f"Error generating research analysis from Ollama: {e}")
                 sys.exit(1)
         else:
             print("Generating summary...")
             try:
                 llm_result = summarize_text(transcript)
-                # Keep default title "# Summary", or let summarize_text handle title if preferred
             except Exception as e:
                 print(f"Error generating summary from Ollama: {e}")
                 sys.exit(1)
 
-    # --- Output ---
+    # Output
     if args.transcript_only:
         if transcript:
-            print(
-                f"Transcription complete. Transcript saved to {transcript_source_path}"
-            )
+            print(f"Transcription complete. Transcript saved to {transcript_path}")
         else:
             print("No transcript was generated (check for errors above).")
-        return  # Exit after transcription if requested
+        return
 
     if llm_result:
-        # Write summary or answer to the output markdown file
         try:
-            output_path = Path(args.output)
-            # Ensure parent directory exists
+            # Determine output path
+            if args.output == "./summary.md" and video_title:
+                # Generate default output filename with date prefix
+                output_filename = generate_filename(sanitize_title(video_title), ".md")
+                output_path = Path(output_filename)
+            else:
+                output_path = Path(args.output)
+
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             file_mode = "a" if args.append else "w"
@@ -343,23 +476,19 @@ def main():
                 f"Writing result to {output_path} (mode: {'append' if args.append else 'overwrite'})"
             )
             with open(output_path, file_mode, encoding="utf-8") as md_file:
-                # Add a separator if appending to an existing non-empty file
                 if (
                     args.append
                     and output_path.exists()
                     and output_path.stat().st_size > 0
                 ):
-                    md_file.write(
-                        "\n\n---\n\n"
-                    )  # Markdown horizontal rule for separation
+                    md_file.write("\n\n---\n\n")
 
-                # The llm_result should ideally contain the title already based on the prompts
                 md_file.write(llm_result)
 
             print(f"Output successfully written to {output_path}")
 
         except Exception as e:
-            print(f"Error writing output file {args.output}: {e}")
+            print(f"Error writing output file: {e}")
             sys.exit(1)
     elif transcript:
         print(
