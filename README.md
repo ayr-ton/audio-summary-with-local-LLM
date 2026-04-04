@@ -175,6 +175,41 @@ audio-summary --from-youtube "<URL>" \
 audio-summary --from-youtube "<URL>" --remote-transcribe --dry-run
 ```
 
+### Hardware Security Keys (FIDO2/U2F)
+
+This tool supports hardware security keys (e.g., YubiKey) with SSH:
+
+**Supported keys:**
+- `id_ecdsa_sk` (ECDSA-SK keys)
+- `id_ed25519_sk` (ED25519-SK keys)
+
+**Configuration:**
+Simply specify your hardware key in the config file:
+```yaml
+remotes:
+  dave:
+    host: dave.local
+    user: tom
+    path: /home/tom/audio-summary
+    ssh_key: ~/.ssh/id_ecdsa_sk  # Hardware key
+    max_retries: 3
+```
+
+The tool automatically detects hardware keys and uses subprocess-based SSH/SCP instead of paramiko to avoid compatibility issues.
+
+### File Existence Checks
+
+The tool automatically checks for existing files before processing:
+
+- **MP3 files:** Checked in `Attachments/` (or `tmp/`) before downloading from YouTube
+- **Transcripts:** Checked before running Whisper transcription
+- **Markdown:** Checked before LLM summarization
+
+**Behavior:**
+- If file exists **locally** → Skips the step and notifies you
+- If file exists **on remote** → Downloads existing file instead of regenerating
+- Remote checks look in both `Attachments/` and `tmp/` directories
+
 ## Usage
 
 The tool offers multiple input options:
