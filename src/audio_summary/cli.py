@@ -499,6 +499,25 @@ def execute_remote_transcription(
                 )
                 print(f"Transcript downloaded to: {local_transcript_path}")
 
+        # Cleanup remote MP3 if requested
+        if args.cleanup_audio and not args.dry_run:
+            try:
+                if executor.check_file_exists(remote_mp3_path):
+                    executor.remove_file(remote_mp3_path)
+                    print(f"Cleaned up remote MP3: {mp3_filename}")
+            except Exception as e:
+                print(f"Warning: Failed to cleanup remote MP3: {e}")
+
+        # Cleanup local MP3 if it was downloaded
+        if args.cleanup_audio and not args.dry_run and audio_file_path:
+            try:
+                local_mp3 = Path(audio_file_path)
+                if local_mp3.exists():
+                    local_mp3.unlink()
+                    print(f"Cleaned up local MP3: {audio_file_path}")
+            except Exception as e:
+                print(f"Warning: Failed to cleanup local MP3: {e}")
+
         # Read and return transcript content
         if args.dry_run:
             return ""
@@ -695,6 +714,13 @@ def main():
         help="Show current queue status and exit",
     )
 
+    # Audio cleanup argument
+    parser.add_argument(
+        "--cleanup-audio",
+        action="store_true",
+        help="Remove MP3 file after transcription to save storage space",
+    )
+
     args = parser.parse_args()
 
     # Handle --queue-status early
@@ -709,6 +735,13 @@ def main():
         parser.error("--research cannot be used with --with-prompt.")
     if args.transcript_only and args.from_transcript:
         print("Warning: --transcript-only has no effect when using --from-transcript.")
+
+    # Cleanup validation: never cleanup when using --from-local (preserve user's original file)
+    if args.cleanup_audio and args.from_local:
+        print(
+            "Warning: --cleanup-audio is ignored when using --from-local (source file preserved)"
+        )
+        args.cleanup_audio = False
 
     # Handle --remote-transcribe shorthand (sets both download and transcription)
     if args.remote_transcribe:
@@ -1000,6 +1033,20 @@ def main():
                         transcript = transcribe_file(
                             str(audio_file_path), str(transcript_path), language
                         )
+
+                        # Cleanup audio file if requested and not from-local
+                        if (
+                            args.cleanup_audio
+                            and audio_file_path
+                            and not args.from_local
+                        ):
+                            try:
+                                audio_path = Path(audio_file_path)
+                                if audio_path.exists():
+                                    audio_path.unlink()
+                                    print(f"Cleaned up audio file: {audio_file_path}")
+                            except Exception as e:
+                                print(f"Warning: Failed to cleanup audio file: {e}")
             except Exception as e:
                 print(f"Error during transcription: {e}")
                 sys.exit(1)

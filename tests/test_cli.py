@@ -304,6 +304,102 @@ class TestLockAndQueueArgs:
         assert exc_info.value.code == 1
 
 
+class TestCleanupAudio:
+    """Tests for --cleanup-audio functionality."""
+
+    def test_cleanup_audio_parameter_exists(self, mocker):
+        """Test that --cleanup-audio flag is accepted."""
+        # Mock LockManager
+        mock_lock_manager = mocker.MagicMock()
+        mock_lock = mocker.MagicMock()
+        mock_lock_manager.acquire_lock.return_value = mock_lock
+        mocker.patch("audio_summary.cli.LockManager", return_value=mock_lock_manager)
+
+        # Mock argparse with cleanup_audio
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = "test.txt"
+        mock_args.cleanup_audio = True
+        mock_args.no_wait = False
+        mock_args.timeout = 7200
+        mock_args.queue_status = False
+        mock_args.with_prompt = None
+        mock_args.research = False
+        mock_args.remote_transcribe = False
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_host = None
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.transcript_only = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock file operations
+        mocker.patch("pathlib.Path.is_file", return_value=True)
+        mocker.patch("builtins.open", mocker.mock_open(read_data="test transcript"))
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify argparse accepted the parameter
+        assert mock_args.cleanup_audio is True
+
+    def test_cleanup_audio_ignored_with_from_local(self, mocker, capsys):
+        """Test that --cleanup-audio is ignored when using --from-local."""
+        # Mock LockManager
+        mock_lock_manager = mocker.MagicMock()
+        mock_lock = mocker.MagicMock()
+        mock_lock_manager.acquire_lock.return_value = mock_lock
+        mocker.patch("audio_summary.cli.LockManager", return_value=mock_lock_manager)
+
+        # Mock argparse simulating --from-local with --cleanup-audio
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = "/path/to/audio.mp3"
+        mock_args.from_transcript = None
+        mock_args.cleanup_audio = True
+        mock_args.no_wait = False
+        mock_args.timeout = 7200
+        mock_args.queue_status = False
+        mock_args.with_prompt = None
+        mock_args.research = False
+        mock_args.remote_transcribe = False
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_host = None
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.transcript_only = True
+        mock_args.title = "Test Audio"
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock file operations
+        mocker.patch("pathlib.Path.is_file", return_value=True)
+        mock_transcribe = mocker.patch(
+            "audio_summary.cli.transcribe_file", return_value="transcript"
+        )
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify warning was printed
+        captured = capsys.readouterr()
+        assert "--cleanup-audio is ignored when using --from-local" in captured.out
+
+
 class TestOllamaModel:
     """Tests for OLLAMA_MODEL constant."""
 

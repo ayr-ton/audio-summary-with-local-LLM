@@ -247,6 +247,28 @@ class RemoteExecutorSSH:
 
         return False, last_stdout, last_stderr
 
+    def remove_file(self, remote_path: str) -> bool:
+        """Remove a file from the remote host using SSH command."""
+        try:
+            # Use SSH command to remove file
+            if self.config.ssh_key_path:
+                key_arg = f"-i {self.config.ssh_key_path}"
+            else:
+                key_arg = ""
+
+            cmd = f"ssh {key_arg} -o StrictHostKeyChecking=no {self.config.user}@{self.config.host} 'rm -f {shlex.quote(remote_path)}'"
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return result.returncode == 0
+        except Exception as e:
+            print(f"Error removing remote file {remote_path}: {e}")
+            return False
+
     def __enter__(self):
         return self
 

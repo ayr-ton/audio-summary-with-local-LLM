@@ -224,6 +224,17 @@ class RemoteExecutor:
         except FileNotFoundError:
             return []
 
+    def remove_file(self, remote_path: str) -> bool:
+        """Remove a file from the remote host."""
+        try:
+            self._sftp.remove(remote_path)
+            return True
+        except FileNotFoundError:
+            return False
+        except Exception as e:
+            print(f"Error removing remote file {remote_path}: {e}")
+            return False
+
     def __enter__(self):
         self.connect()
         return self
