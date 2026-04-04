@@ -205,7 +205,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Application specific
-tmp/
+Attachments/
 
 # Generated using ignr.py - github.com/Antrikshy/ignr.py
 

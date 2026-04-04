@@ -12,7 +12,6 @@ from audio_summary.cli import (
     sanitize_title,
     generate_filename,
     clean_thinking_chunks,
-    find_obsidian_attachments,
     OLLAMA_MODEL,
     MAX_TITLE_LENGTH,
 )
@@ -137,74 +136,6 @@ class TestCleanThinkingChunks:
         text = "  Hello World  "
         result = clean_thinking_chunks(text)
         assert result == "Hello World"
-
-
-class TestFindObsidianAttachments:
-    """Tests for the find_obsidian_attachments function."""
-
-    def test_finds_attachments_in_current_dir(self, tmp_path, monkeypatch):
-        """Test that Attachments folder is found in current directory."""
-        monkeypatch.chdir(tmp_path)
-        attachments_dir = tmp_path / "Attachments"
-        attachments_dir.mkdir()
-
-        result = find_obsidian_attachments()
-        assert result == attachments_dir
-
-    def test_finds_attachments_in_parent_dir(self, tmp_path, monkeypatch):
-        """Test that Attachments folder is found in parent directory."""
-        parent = tmp_path / "parent"
-        parent.mkdir()
-        child = parent / "child"
-        child.mkdir()
-        attachments = parent / "Attachments"
-        attachments.mkdir()
-
-        monkeypatch.chdir(child)
-        result = find_obsidian_attachments()
-        assert result == attachments
-
-    def test_finds_attachments_in_grandparent_dir(self, tmp_path, monkeypatch):
-        """Test that Attachments folder is found up to 3 levels up."""
-        root = tmp_path / "root"
-        root.mkdir()
-        level1 = root / "level1"
-        level1.mkdir()
-        level2 = level1 / "level2"
-        level2.mkdir()
-        level3 = level2 / "level3"
-        level3.mkdir()
-        attachments = root / "Attachments"
-        attachments.mkdir()
-
-        monkeypatch.chdir(level3)
-        result = find_obsidian_attachments()
-        assert result == attachments
-
-    def test_returns_none_when_no_attachments(self, tmp_path, monkeypatch):
-        """Test that None is returned when no Attachments folder exists."""
-        monkeypatch.chdir(tmp_path)
-        result = find_obsidian_attachments()
-        assert result is None
-
-    def test_returns_none_when_too_deep(self, tmp_path, monkeypatch):
-        """Test that None is returned when Attachments is more than 3 levels up."""
-        root = tmp_path / "root"
-        root.mkdir()
-        level1 = root / "level1"
-        level1.mkdir()
-        level2 = level1 / "level2"
-        level2.mkdir()
-        level3 = level2 / "level3"
-        level3.mkdir()
-        level4 = level3 / "level4"
-        level4.mkdir()
-        attachments = root / "Attachments"
-        attachments.mkdir()
-
-        monkeypatch.chdir(level4)
-        result = find_obsidian_attachments()
-        assert result is None
 
 
 class TestOllamaModel:
@@ -447,7 +378,7 @@ class TestGranularRemoteExecution:
         )
 
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
-        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+        # Removed - Attachments is now default directory
 
         mock_execute_remote_download.return_value = Path("/tmp/test.mp3")
 
@@ -519,7 +450,7 @@ class TestGranularRemoteExecution:
         )
 
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
-        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+        # Removed - Attachments is now default directory
 
         mock_download_from_youtube.return_value = Path("/tmp/test.mp3")
         mock_execute_remote_transcription.return_value = "Test transcript content"
@@ -580,7 +511,7 @@ class TestGranularRemoteExecution:
         mocker.patch(
             "audio_summary.cli.resolve_remote_config", return_value=mock_remote_config
         )
-        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+        # Removed - Attachments is now default directory
 
         # Mock the actual execution function
         mock_summarize = mocker.patch("audio_summary.cli.execute_remote_summarize")
@@ -645,7 +576,7 @@ class TestGranularRemoteExecution:
         )
 
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
-        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+        # Removed - Attachments is now default directory
 
         mock_execute_remote_download.return_value = Path("/tmp/test.mp3")
         mock_execute_remote_transcription.return_value = "Test transcript content"
@@ -718,7 +649,7 @@ class TestGranularRemoteExecution:
         )
 
         mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
-        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+        # Removed - Attachments is now default directory
 
         mock_execute_remote_download.return_value = Path("/tmp/test.mp3")
         mock_execute_remote_transcription.return_value = "Test transcript content"

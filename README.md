@@ -201,14 +201,14 @@ The tool automatically detects hardware keys and uses subprocess-based SSH/SCP i
 
 The tool automatically checks for existing files before processing:
 
-- **MP3 files:** Checked in `Attachments/` (or `tmp/`) before downloading from YouTube
+- **MP3 files:** Checked in `Attachments/` before downloading from YouTube
 - **Transcripts:** Checked before running Whisper transcription
 - **Markdown:** Checked before LLM summarization
 
 **Behavior:**
 - If file exists **locally** → Skips the step and notifies you
 - If file exists **on remote** → Downloads existing file instead of regenerating
-- Remote checks look in both `Attachments/` and `tmp/` directories
+- Remote checks look in `Attachments/` directory only
 
 ## Usage
 
@@ -280,11 +280,11 @@ audio-summary [OPTIONS]
    audio-summary --from-youtube <YouTube-Video-URL> --output my_summary.md
    ```
 
-The output summary will be saved in a markdown file in the specified output directory, while the transcript will be saved in the temporary directory.
+The output summary will be saved in a markdown file in the specified output directory, while the transcript will be saved in the `Attachments/` directory.
 
 ## Output
 
-The summarized content is saved as a markdown file (default: `summary.md`) in the current working directory. This file includes a title and a concise summary of the content. The transcript is saved in the `tmp/transcript.txt` file.
+The summarized content is saved as a markdown file (default: `summary.md`) in the current working directory. This file includes a title and a concise summary of the content. The transcript is saved in the `Attachments/` directory.
 
 ## Hardware Acceleration
 

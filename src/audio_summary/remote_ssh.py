@@ -1,10 +1,9 @@
-"""Remote execution using subprocess SSH (supports hardware keys)."""
-
-import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional, Callable
 from tqdm import tqdm
+import shlex
 
 from .config import RemoteConfig
 
@@ -99,7 +98,9 @@ class RemoteExecutorSSH:
     def check_file_exists(self, remote_path: str) -> bool:
         """Check if a file exists on remote."""
         ssh_cmd = self.ssh_base_cmd.copy()
-        ssh_cmd.append(f"test -f {remote_path} && echo 'EXISTS' || echo 'NOT_FOUND'")
+        # Properly escape the path for shell execution
+        escaped_path = shlex.quote(remote_path)
+        ssh_cmd.append(f"test -f {escaped_path} && echo 'EXISTS' || echo 'NOT_FOUND'")
 
         result = subprocess.run(
             ssh_cmd,
@@ -112,8 +113,12 @@ class RemoteExecutorSSH:
 
     def get_file_size(self, remote_path: str) -> int:
         """Get file size from remote."""
+        # First check if file exists and is a regular file (not directory)
         ssh_cmd = self.ssh_base_cmd.copy()
-        ssh_cmd.append(f"stat -c %s {remote_path} 2>/dev/null || echo 0")
+        escaped_path = shlex.quote(remote_path)
+        ssh_cmd.append(
+            f"test -f {escaped_path} && stat -c %s {escaped_path} || echo -1"
+        )
 
         result = subprocess.run(
             ssh_cmd,
@@ -123,7 +128,8 @@ class RemoteExecutorSSH:
         )
 
         try:
-            return int(result.stdout.strip())
+            size = int(result.stdout.strip())
+            return size if size >= 0 else 0
         except ValueError:
             return 0
 

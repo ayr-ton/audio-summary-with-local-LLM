@@ -66,20 +66,6 @@ def get_youtube_title(url: str) -> str | None:
         return None
 
 
-def find_obsidian_attachments() -> Path | None:
-    """Check if we're in an Obsidian vault by looking for Attachments folder."""
-    current = Path.cwd()
-    # Check current directory and up to 3 parent levels
-    for _ in range(4):
-        attachments = current / "Attachments"
-        if attachments.exists() and attachments.is_dir():
-            return attachments
-        if current.parent == current:  # Reached root
-            break
-        current = current.parent
-    return None
-
-
 def clean_thinking_chunks(text: str) -> str:
     """Remove thinking blocks from model output."""
     # Remove thinking blocks (support both formats)
@@ -301,46 +287,52 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
         from .remote import RemoteExecutor as RemoteExecutorClass
 
     with RemoteExecutorClass(remote_config) as executor:
-        # Check if MP3 already exists on remote (in Attachments or tmp directory)
+        # Check if MP3 already exists on remote
         mp3_filename = generate_filename(video_title, ".mp3")
-        remote_mp3_path_attachments = f"{remote_config.path}/Attachments/{mp3_filename}"
-        remote_mp3_path_tmp = f"{remote_config.path}/tmp/{mp3_filename}"
-
-        remote_mp3_path = None
-        mp3_exists = False
+        remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
 
         if args.dry_run:
             print(f"[DRY-RUN] Would check if MP3 exists on remote")
-        else:
-            # Check Attachments first
-            if executor.check_file_exists(remote_mp3_path_attachments):
-                print(
-                    f"MP3 already exists on remote (Attachments): {remote_mp3_path_attachments}"
-                )
-                remote_mp3_path = remote_mp3_path_attachments
-                mp3_exists = True
-            # Check tmp directory
-            elif executor.check_file_exists(remote_mp3_path_tmp):
-                print(f"MP3 already exists on remote (tmp): {remote_mp3_path_tmp}")
-                remote_mp3_path = remote_mp3_path_tmp
-                mp3_exists = True
+        elif executor.check_file_exists(remote_mp3_path):
+            print(f"MP3 already exists on remote: {remote_mp3_path}")
+            # Execute download on remote
+            cmd = f"uv run audio-summary --from-youtube '{args.from_youtube}' --transcript-only --output /dev/null"
+            if args.dry_run:
+                print(f"[DRY-RUN] Would execute: {cmd}")
             else:
-                remote_mp3_path = remote_mp3_path_attachments
+                print("Executing download on remote...")
+                # First ensure Attachments directory exists on remote
+                executor.execute(
+                    "mkdir -p Attachments", cwd=remote_config.path, dry_run=args.dry_run
+                )
 
-            if not mp3_exists:
-                # Execute download on remote
-                cmd = f"uv run audio-summary --from-youtube '{args.from_youtube}' --transcript-only --output /dev/null"
-                if args.dry_run:
-                    print(f"[DRY-RUN] Would execute: {cmd}")
-                else:
-                    print("Executing download on remote...")
-                    success, stdout, stderr = executor.execute_with_retry(
-                        cmd, cwd=remote_config.path, dry_run=args.dry_run
-                    )
-                    if not success:
-                        print(f"Remote download failed: {stderr}")
+                success, stdout, stderr = executor.execute_with_retry(
+                    cmd, cwd=remote_config.path, dry_run=args.dry_run
+                )
+                if not success:
+                    print(f"Remote download failed: {stderr}")
+                    sys.exit(1)
+                print("Download complete on remote")
+
+                # Verify file was created (check both stdout message and file existence)
+                if not executor.check_file_exists(remote_mp3_path):
+                    # File may have been skipped if it already existed - check for that in output
+                    if "MP3 already exists" in stdout or "Skipping download" in stdout:
+                        print(
+                            f"Remote indicated file already exists, checking again..."
+                        )
+                        # Wait a moment and check again
+                        import time
+
+                        time.sleep(1)
+
+                    if not executor.check_file_exists(remote_mp3_path):
+                        print(
+                            f"Error: Remote MP3 file was not created at {remote_mp3_path}"
+                        )
+                        print(f"stdout: {stdout}")
+                        print(f"stderr: {stderr}")
                         sys.exit(1)
-                    print("Download complete on remote")
 
         # Download MP3 from remote
         print("Downloading MP3 from remote...")
@@ -364,8 +356,16 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
                     dry_run=args.dry_run,
                 )
                 print(f"MP3 downloaded to: {data_directory / mp3_filename}")
+            else:
+                print(f"Warning: Remote MP3 file has size 0: {remote_mp3_path}")
 
-        return data_directory / mp3_filename
+        # Verify file exists locally before returning
+        local_mp3_path = data_directory / mp3_filename
+        if not args.dry_run and not local_mp3_path.is_file():
+            print(f"Error: MP3 file was not downloaded successfully: {local_mp3_path}")
+            sys.exit(1)
+
+        return local_mp3_path
 
 
 def execute_remote_transcription(
@@ -397,38 +397,32 @@ def execute_remote_transcription(
         else:
             # Determine if we need to upload the audio file
             mp3_filename = audio_file_path.name
-            remote_mp3_path_attachments = (
-                f"{remote_config.path}/Attachments/{mp3_filename}"
-            )
-            remote_mp3_path_tmp = f"{remote_config.path}/tmp/{mp3_filename}"
+            remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
 
-            # Check if MP3 exists on remote (in Attachments or tmp directory)
-            mp3_exists = False
-            if executor.check_file_exists(remote_mp3_path_attachments):
-                print(
-                    f"MP3 already exists on remote (Attachments): {remote_mp3_path_attachments}"
-                )
-                mp3_exists = True
-                remote_mp3_path = remote_mp3_path_attachments
-            elif executor.check_file_exists(remote_mp3_path_tmp):
-                print(f"MP3 already exists on remote (tmp): {remote_mp3_path_tmp}")
-                mp3_exists = True
-                remote_mp3_path = remote_mp3_path_tmp
+            # Check if MP3 exists on remote
+            if executor.check_file_exists(remote_mp3_path):
+                print(f"MP3 already exists on remote: {remote_mp3_path}")
             else:
-                remote_mp3_path = remote_mp3_path_attachments
-
-            if not mp3_exists:
                 # Need to upload the audio file
                 if args.dry_run:
                     print(
                         f"[DRY-RUN] Would upload {audio_file_path} to {remote_mp3_path}"
                     )
                 else:
-                    print("Uploading audio file to remote...")
-                    file_size = audio_file_path.stat().st_size
+                    # Ensure audio_file_path is absolute Path
+                    audio_path = Path(audio_file_path)
+                    if not audio_path.is_absolute():
+                        audio_path = audio_path.resolve()
+
+                    if not audio_path.is_file():
+                        print(f"Error: Audio file not found at {audio_path}")
+                        sys.exit(1)
+
+                    print(f"Uploading audio file to remote: {audio_path}")
+                    file_size = audio_path.stat().st_size
                     progress = create_file_progress_bar(mp3_filename, file_size)
                     executor.upload_file(
-                        audio_file_path,
+                        audio_path,
                         remote_mp3_path,
                         progress_bar=progress,
                         dry_run=args.dry_run,
@@ -500,18 +494,15 @@ def execute_remote_summarize(args, remote_config, transcript_path, video_title):
 
     with RemoteExecutorClass(remote_config) as executor:
         # Upload transcript to remote
-        remote_transcript_path = f"{remote_config.path}/tmp/{transcript_path.name}"
+        remote_transcript_path = (
+            f"{remote_config.path}/Attachments/{transcript_path.name}"
+        )
 
         if args.dry_run:
             print(
                 f"[DRY-RUN] Would upload {transcript_path} to {remote_transcript_path}"
             )
         else:
-            # Ensure remote tmp directory exists
-            executor.execute(
-                "mkdir -p tmp", cwd=remote_config.path, dry_run=args.dry_run
-            )
-
             # Upload with progress
             file_size = transcript_path.stat().st_size
             progress = create_file_progress_bar(transcript_path.name, file_size)
@@ -524,7 +515,7 @@ def execute_remote_summarize(args, remote_config, transcript_path, video_title):
             print(f"Transcript uploaded to remote: {remote_transcript_path}")
 
         # Execute summarization on remote
-        cmd = f"uv run audio-summary --from-transcript 'tmp/{transcript_path.name}'"
+        cmd = f"uv run audio-summary --from-transcript 'Attachments/{transcript_path.name}'"
         if args.research:
             cmd += " --research"
 
@@ -707,16 +698,11 @@ def main():
     if language and language.lower() == "auto":
         language = None
 
-    # Check for Obsidian vault
-    attachments_dir = find_obsidian_attachments()
-    if attachments_dir:
-        print(f"Obsidian vault detected. Attachments folder: {attachments_dir}")
-        data_directory = attachments_dir
-    else:
-        data_directory = Path("tmp")
-        if not data_directory.exists():
-            data_directory.mkdir(parents=True)
-            print(f"Created directory: {data_directory}")
+    # Use Attachments/ as default directory
+    data_directory = Path("Attachments")
+    if not data_directory.exists():
+        data_directory.mkdir(parents=True)
+        print(f"Created directory: {data_directory}")
 
     transcript = None
     transcript_path = None
@@ -753,12 +739,9 @@ def main():
         )
 
         if args.remote_download:
-            # Check if MP3 already exists on remote before downloading (in both Attachments and tmp)
+            # Check if MP3 already exists on remote before downloading
             mp3_filename = generate_filename(video_title, ".mp3")
-            remote_mp3_path_attachments = (
-                f"{remote_config.path}/Attachments/{mp3_filename}"
-            )
-            remote_mp3_path_tmp = f"{remote_config.path}/tmp/{mp3_filename}"
+            remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
 
             # Determine which executor to use for checking
             if use_subprocess_ssh:
@@ -767,18 +750,8 @@ def main():
                 from .remote import RemoteExecutor as RemoteExecutorClass
 
             with RemoteExecutorClass(remote_config) as executor:
-                # Check both Attachments and tmp directories
-                remote_mp3_path = None
-                if executor.check_file_exists(remote_mp3_path_attachments):
-                    remote_mp3_path = remote_mp3_path_attachments
-                    print(
-                        f"MP3 already exists on remote (Attachments): {remote_mp3_path}"
-                    )
-                elif executor.check_file_exists(remote_mp3_path_tmp):
-                    remote_mp3_path = remote_mp3_path_tmp
-                    print(f"MP3 already exists on remote (tmp): {remote_mp3_path}")
-
-                if remote_mp3_path:
+                if executor.check_file_exists(remote_mp3_path):
+                    print(f"MP3 already exists on remote: {remote_mp3_path}")
                     print("Skipping download on remote.")
                     # Download existing file from remote
                     print("Downloading existing MP3 from remote...")
@@ -876,15 +849,12 @@ def main():
     if not transcript and audio_file_path:
         try:
             if args.remote_transcription:
-                # Check if transcript already exists on remote (in both Attachments and tmp)
+                # Check if transcript already exists on remote
                 transcript_filename = generate_filename(
                     video_title, ".txt", is_transcript=True
                 )
-                remote_transcript_path_attachments = (
+                remote_transcript_path = (
                     f"{remote_config.path}/Attachments/{transcript_filename}"
-                )
-                remote_transcript_path_tmp = (
-                    f"{remote_config.path}/tmp/{transcript_filename}"
                 )
 
                 # Determine which executor to use
@@ -894,20 +864,10 @@ def main():
                     from .remote import RemoteExecutor as RemoteExecutorClass
 
                 with RemoteExecutorClass(remote_config) as executor:
-                    # Check both Attachments and tmp directories
-                    remote_transcript_path = None
-                    if executor.check_file_exists(remote_transcript_path_attachments):
-                        remote_transcript_path = remote_transcript_path_attachments
+                    if executor.check_file_exists(remote_transcript_path):
                         print(
-                            f"Transcript already exists on remote (Attachments): {remote_transcript_path}"
+                            f"Transcript already exists on remote: {remote_transcript_path}"
                         )
-                    elif executor.check_file_exists(remote_transcript_path_tmp):
-                        remote_transcript_path = remote_transcript_path_tmp
-                        print(
-                            f"Transcript already exists on remote (tmp): {remote_transcript_path}"
-                        )
-
-                    if remote_transcript_path:
                         print("Skipping transcription on remote.")
                         # Download existing transcript
                         transcript_size = executor.get_file_size(remote_transcript_path)
