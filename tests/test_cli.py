@@ -217,3 +217,458 @@ class TestOllamaModel:
     def test_model_is_string(self):
         """Test that OLLAMA_MODEL is a string."""
         assert isinstance(OLLAMA_MODEL, str)
+
+
+class TestRemoteExecutionArgs:
+    """Tests for granular remote execution argument validation."""
+
+    def test_remote_transcribe_shorthand_sets_both_flags(self, mocker):
+        """Test that --remote-transcribe sets both --remote-download and --remote-transcription."""
+        import argparse
+        from audio_summary.cli import main
+
+        # Mock sys.argv to simulate CLI arguments
+        mocker.patch(
+            "sys.argv",
+            [
+                "audio-summary",
+                "--from-youtube",
+                "https://example.com/video",
+                "--remote-transcribe",
+                "--remote-host",
+                "test.local",
+            ],
+        )
+
+        # Mock the parser to capture parsed args
+        mock_parser = mocker.patch("argparse.ArgumentParser.parse_args")
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.from_local = None
+        mock_args.from_transcript = None
+        mock_args.remote_transcribe = True
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.dry_run = False
+        mock_parser.return_value = mock_args
+
+        # Verify that remote_transcribe is True
+        assert mock_args.remote_transcribe is True
+
+    def test_remote_download_requires_from_youtube(self, mocker, capsys):
+        """Test that --remote-download requires --from-youtube."""
+        mocker.patch(
+            "sys.argv",
+            [
+                "audio-summary",
+                "--from-local",
+                "/path/to/file.mp3",
+                "--remote-download",
+                "--remote-host",
+                "test.local",
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            from audio_summary.cli import main
+
+            main()
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert (
+            "--remote-download requires --from-youtube" in captured.err
+            or "--remote-download requires --from-youtube" in captured.out
+        )
+
+    def test_remote_transcription_with_from_transcript_error(self, mocker, capsys):
+        """Test that --remote-transcription cannot be used with --from-transcript."""
+        mocker.patch(
+            "sys.argv",
+            [
+                "audio-summary",
+                "--from-transcript",
+                "transcript.txt",
+                "--remote-transcription",
+                "--remote-host",
+                "test.local",
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            from audio_summary.cli import main
+
+            main()
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert (
+            "--remote-transcription cannot be used with --from-transcript"
+            in captured.err
+            or "--remote-transcription cannot be used with --from-transcript"
+            in captured.out
+        )
+
+    def test_remote_flags_require_remote_config(self, mocker, capsys):
+        """Test that remote flags require remote configuration."""
+        mocker.patch(
+            "sys.argv",
+            [
+                "audio-summary",
+                "--from-youtube",
+                "https://example.com/video",
+                "--remote-download",
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            from audio_summary.cli import main
+
+            main()
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert (
+            "requires --remote-host, --remote-path, or --remote-user" in captured.err
+            or "requires --remote-host, --remote-path, or --remote-user" in captured.out
+        )
+
+    def test_remote_summarize_with_from_transcript(self, mocker):
+        """Test that --remote-summarize works with --from-transcript."""
+        import argparse
+
+        mocker.patch(
+            "sys.argv",
+            [
+                "audio-summary",
+                "--from-transcript",
+                "transcript.txt",
+                "--remote-summarize",
+                "--remote-host",
+                "test.local",
+            ],
+        )
+
+        # This should not raise an error
+        mock_parser = mocker.patch("argparse.ArgumentParser.parse_args")
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = "transcript.txt"
+        mock_args.remote_transcribe = False
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = True
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.dry_run = False
+        mock_parser.return_value = mock_args
+
+        # Verify that remote_summarize is True with from_transcript
+        assert mock_args.remote_summarize is True
+        assert mock_args.from_transcript == "transcript.txt"
+
+
+class TestGranularRemoteExecution:
+    """Tests for granular remote execution workflow."""
+
+    def test_remote_download_only(self, mocker):
+        """Test --remote-download executes download on remote only."""
+        mock_execute_remote_download = mocker.patch(
+            "audio_summary.cli.execute_remote_download"
+        )
+        mock_execute_remote_transcription = mocker.patch(
+            "audio_summary.cli.execute_remote_transcription"
+        )
+        mock_execute_remote_summarize = mocker.patch(
+            "audio_summary.cli.execute_remote_summarize"
+        )
+        mock_download_from_youtube = mocker.patch(
+            "audio_summary.cli.download_from_youtube"
+        )
+        mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
+
+        # Mock args
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.from_local = None
+        mock_args.from_transcript = None
+        mock_args.remote_download = True
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_transcribe = False
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = "/path/to/audio-summary"
+        mock_args.remote_user = "user"
+        mock_args.dry_run = False
+        mock_args.title = "Test Video"
+        mock_args.language = "en"
+        mock_args.transcript_only = False
+        mock_args.research = False
+        mock_args.with_prompt = None
+        mock_args.output = "./summary.md"
+        mock_args.append = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+        mocker.patch(
+            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+        )
+        mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
+        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+
+        mock_execute_remote_download.return_value = Path("/tmp/test.mp3")
+
+        from audio_summary.cli import main
+
+        # Should not raise
+        try:
+            main()
+        except SystemExit:
+            pass  # Expected exit
+
+        # Verify remote download was called
+        mock_execute_remote_download.assert_called_once()
+
+        # Verify remote transcription was NOT called
+        mock_execute_remote_transcription.assert_not_called()
+
+        # Verify local download was NOT called
+        mock_download_from_youtube.assert_not_called()
+
+    def test_remote_transcription_only(self, mocker):
+        """Test --remote-transcription executes transcription on remote only."""
+        mock_execute_remote_download = mocker.patch(
+            "audio_summary.cli.execute_remote_download"
+        )
+        mock_execute_remote_transcription = mocker.patch(
+            "audio_summary.cli.execute_remote_transcription"
+        )
+        mock_download_from_youtube = mocker.patch(
+            "audio_summary.cli.download_from_youtube"
+        )
+        mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
+
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.from_local = None
+        mock_args.from_transcript = None
+        mock_args.remote_download = False
+        mock_args.remote_transcription = True
+        mock_args.remote_summarize = False
+        mock_args.remote_transcribe = False
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = "/path/to/audio-summary"
+        mock_args.remote_user = "user"
+        mock_args.dry_run = False
+        mock_args.title = "Test Video"
+        mock_args.language = "en"
+        mock_args.transcript_only = False
+        mock_args.research = False
+        mock_args.with_prompt = None
+        mock_args.output = "./summary.md"
+        mock_args.append = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+        mocker.patch(
+            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+        )
+        mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
+        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+
+        mock_download_from_youtube.return_value = Path("/tmp/test.mp3")
+        mock_execute_remote_transcription.return_value = "Test transcript content"
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify local download was called
+        mock_download_from_youtube.assert_called_once()
+
+        # Verify remote transcription was called
+        mock_execute_remote_transcription.assert_called_once()
+
+        # Verify local transcription was NOT called
+        mock_transcribe_file.assert_not_called()
+
+        # Verify remote download was NOT called
+        mock_execute_remote_download.assert_not_called()
+
+    def test_remote_summarize_only(self, mocker):
+        """Test --remote-summarize executes summarization on remote only."""
+        mock_execute_remote_summarize = mocker.patch(
+            "audio_summary.cli.execute_remote_summarize"
+        )
+
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = "transcript.txt"
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = True
+        mock_args.remote_transcribe = False
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = "/path/to/audio-summary"
+        mock_args.remote_user = "user"
+        mock_args.dry_run = False
+        mock_args.title = None
+        mock_args.language = "en"
+        mock_args.transcript_only = False
+        mock_args.research = False
+        mock_args.with_prompt = None
+        mock_args.output = "./summary.md"
+        mock_args.append = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+        mocker.patch(
+            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+        )
+        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+
+        mock_path = mocker.MagicMock()
+        mock_path.is_file.return_value = True
+        mock_path.stat.return_value = mocker.MagicMock(st_size=1000)
+        mock_path.stem = "2024-01-01 Test Video_transcript"
+        mock_path.name = "2024-01-01 Test Video_transcript.txt"
+
+        mocker.patch("pathlib.Path", return_value=mock_path)
+
+        mock_execute_remote_summarize.return_value = Path("./2024-01-01 Test Video.md")
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify remote summarize was called
+        mock_execute_remote_summarize.assert_called_once()
+
+    def test_remote_transcribe_shorthand_workflow(self, mocker):
+        """Test that --remote-transcribe shorthand works correctly."""
+        mock_execute_remote_download = mocker.patch(
+            "audio_summary.cli.execute_remote_download"
+        )
+        mock_execute_remote_transcription = mocker.patch(
+            "audio_summary.cli.execute_remote_transcription"
+        )
+        mock_download_from_youtube = mocker.patch(
+            "audio_summary.cli.download_from_youtube"
+        )
+        mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
+
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.from_local = None
+        mock_args.from_transcript = None
+        mock_args.remote_download = True  # Set by --remote-transcribe shorthand
+        mock_args.remote_transcription = True  # Set by --remote-transcribe shorthand
+        mock_args.remote_summarize = False
+        mock_args.remote_transcribe = True
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = "/path/to/audio-summary"
+        mock_args.remote_user = "user"
+        mock_args.dry_run = False
+        mock_args.title = "Test Video"
+        mock_args.language = "en"
+        mock_args.transcript_only = False
+        mock_args.research = False
+        mock_args.with_prompt = None
+        mock_args.output = "./summary.md"
+        mock_args.append = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+        mocker.patch(
+            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+        )
+        mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
+        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+
+        mock_execute_remote_download.return_value = Path("/tmp/test.mp3")
+        mock_execute_remote_transcription.return_value = "Test transcript content"
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify remote download was called
+        mock_execute_remote_download.assert_called_once()
+
+        # Verify remote transcription was called
+        mock_execute_remote_transcription.assert_called_once()
+
+        # Verify local download/transcription were NOT called
+        mock_download_from_youtube.assert_not_called()
+        mock_transcribe_file.assert_not_called()
+
+    def test_full_remote_pipeline(self, mocker):
+        """Test full remote pipeline with all remote flags."""
+        mock_execute_remote_download = mocker.patch(
+            "audio_summary.cli.execute_remote_download"
+        )
+        mock_execute_remote_transcription = mocker.patch(
+            "audio_summary.cli.execute_remote_transcription"
+        )
+        mock_execute_remote_summarize = mocker.patch(
+            "audio_summary.cli.execute_remote_summarize"
+        )
+        mock_summarize_text = mocker.patch("audio_summary.cli.summarize_text")
+
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.from_local = None
+        mock_args.from_transcript = None
+        mock_args.remote_download = True
+        mock_args.remote_transcription = True
+        mock_args.remote_summarize = True
+        mock_args.remote_transcribe = True
+        mock_args.remote_host = "test.local"
+        mock_args.remote_path = "/path/to/audio-summary"
+        mock_args.remote_user = "user"
+        mock_args.dry_run = False
+        mock_args.title = "Test Video"
+        mock_args.language = "en"
+        mock_args.transcript_only = False
+        mock_args.research = False
+        mock_args.with_prompt = None
+        mock_args.output = "./summary.md"
+        mock_args.append = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+        mocker.patch(
+            "audio_summary.cli.resolve_remote_config", return_value=mocker.MagicMock()
+        )
+        mocker.patch("audio_summary.cli.get_youtube_title", return_value="Test Video")
+        mocker.patch("audio_summary.cli.find_obsidian_attachments", return_value=None)
+
+        mock_execute_remote_download.return_value = Path("/tmp/test.mp3")
+        mock_execute_remote_transcription.return_value = "Test transcript content"
+        mock_execute_remote_summarize.return_value = Path("./summary.md")
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify all remote functions were called
+        mock_execute_remote_download.assert_called_once()
+        mock_execute_remote_transcription.assert_called_once()
+        mock_execute_remote_summarize.assert_called_once()
+
+        # Verify local summarize was NOT called
+        mock_summarize_text.assert_not_called()

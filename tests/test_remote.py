@@ -233,3 +233,263 @@ default_remote: dave
         config = load_config()
         assert config.remotes == {}
         assert config.default_remote is None
+
+
+class TestGranularRemoteExecution:
+    """Tests for granular remote execution functions."""
+
+    def test_execute_remote_download(self, mocker, tmp_path):
+        """Test execute_remote_download function."""
+        from audio_summary.cli import execute_remote_download
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        # Create a mock for RemoteExecutor
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor.check_file_exists.return_value = False
+        mock_executor.get_file_size.return_value = 1000
+
+        # Mock args
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.dry_run = False
+        mock_args.title = "Test Video"
+
+        data_directory = tmp_path
+
+        result = execute_remote_download(
+            mock_args, config, "Test Video", data_directory
+        )
+
+        # Verify RemoteExecutor was created with correct config
+        mock_executor_class.assert_called_once_with(config)
+
+        # Verify download was executed on remote
+        mock_executor.execute_with_retry.assert_called_once()
+
+        # Verify file was downloaded
+        mock_executor.download_file.assert_called_once()
+
+    def test_execute_remote_download_file_exists(self, mocker, tmp_path):
+        """Test execute_remote_download when file already exists on remote."""
+        from audio_summary.cli import execute_remote_download
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor.check_file_exists.return_value = True  # File exists
+        mock_executor.get_file_size.return_value = 1000
+
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.dry_run = False
+
+        data_directory = tmp_path
+
+        result = execute_remote_download(
+            mock_args, config, "Test Video", data_directory
+        )
+
+        # Verify download was NOT executed (file exists)
+        mock_executor.execute_with_retry.assert_not_called()
+
+        # Verify file was still downloaded
+        mock_executor.download_file.assert_called_once()
+
+    def test_execute_remote_download_dry_run(self, mocker, tmp_path):
+        """Test execute_remote_download in dry-run mode."""
+        from audio_summary.cli import execute_remote_download
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = "https://example.com/video"
+        mock_args.dry_run = True
+
+        data_directory = tmp_path
+
+        result = execute_remote_download(
+            mock_args, config, "Test Video", data_directory
+        )
+
+        # Verify no actual execution or download happened
+        mock_executor.execute_with_retry.assert_not_called()
+        mock_executor.download_file.assert_not_called()
+
+    def test_execute_remote_transcription_with_upload(self, mocker, tmp_path):
+        """Test execute_remote_transcription uploads file when not on remote."""
+        from audio_summary.cli import execute_remote_transcription
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor.check_file_exists.side_effect = [
+            False,
+            False,
+        ]  # MP3 doesn't exist, transcript doesn't exist
+        mock_executor.get_file_size.return_value = 500
+
+        mock_args = mocker.MagicMock()
+        mock_args.dry_run = False
+
+        audio_file_path = tmp_path / "test.mp3"
+        audio_file_path.write_text("fake audio content")
+        transcript_path = tmp_path / "test_transcript.txt"
+
+        result = execute_remote_transcription(
+            mock_args, config, audio_file_path, transcript_path, "Test Video"
+        )
+
+        # Verify MP3 was uploaded (didn't exist on remote)
+        mock_executor.upload_file.assert_called_once()
+
+        # Verify transcription was executed on remote
+        mock_executor.execute_with_retry.assert_called_once()
+
+        # Verify transcript was downloaded
+        mock_executor.download_file.assert_called_once()
+
+    def test_execute_remote_transcription_mp3_exists(self, mocker, tmp_path):
+        """Test execute_remote_transcription when MP3 already exists on remote."""
+        from audio_summary.cli import execute_remote_transcription
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor.check_file_exists.side_effect = [
+            True,
+            False,
+        ]  # MP3 exists, transcript doesn't
+        mock_executor.get_file_size.return_value = 500
+
+        mock_args = mocker.MagicMock()
+        mock_args.dry_run = False
+
+        audio_file_path = tmp_path / "test.mp3"
+        audio_file_path.write_text("fake audio content")
+        transcript_path = tmp_path / "test_transcript.txt"
+
+        result = execute_remote_transcription(
+            mock_args, config, audio_file_path, transcript_path, "Test Video"
+        )
+
+        # Verify MP3 was NOT uploaded (already exists)
+        mock_executor.upload_file.assert_not_called()
+
+        # Verify transcription was still executed
+        mock_executor.execute_with_retry.assert_called_once()
+
+        # Verify transcript was downloaded
+        mock_executor.download_file.assert_called_once()
+
+    def test_execute_remote_transcription_transcript_exists(self, mocker, tmp_path):
+        """Test execute_remote_transcription when transcript already exists on remote."""
+        from audio_summary.cli import execute_remote_transcription
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+        mock_executor.check_file_exists.side_effect = [True, True]  # Both exist
+        mock_executor.get_file_size.return_value = 500
+
+        mock_args = mocker.MagicMock()
+        mock_args.dry_run = False
+
+        audio_file_path = tmp_path / "test.mp3"
+        audio_file_path.write_text("fake audio content")
+        transcript_path = tmp_path / "test_transcript.txt"
+
+        result = execute_remote_transcription(
+            mock_args, config, audio_file_path, transcript_path, "Test Video"
+        )
+
+        # Verify no transcription was executed (transcript exists)
+        mock_executor.execute_with_retry.assert_not_called()
+
+        # Verify transcript was still downloaded
+        mock_executor.download_file.assert_called_once()
+
+    def test_execute_remote_transcription_dry_run(self, mocker, tmp_path):
+        """Test execute_remote_transcription in dry-run mode."""
+        from audio_summary.cli import execute_remote_transcription
+        from audio_summary.config import RemoteConfig
+
+        config = RemoteConfig(
+            name="test",
+            host="test.local",
+            user="tom",
+            path="/home/tom/audio-summary",
+        )
+
+        mock_executor_class = mocker.patch("audio_summary.cli.RemoteExecutor")
+        mock_executor = mocker.MagicMock()
+        mock_executor_class.return_value.__enter__.return_value = mock_executor
+
+        mock_args = mocker.MagicMock()
+        mock_args.dry_run = True
+
+        audio_file_path = tmp_path / "test.mp3"
+        audio_file_path.write_text("fake audio content")
+        transcript_path = tmp_path / "test_transcript.txt"
+
+        result = execute_remote_transcription(
+            mock_args, config, audio_file_path, transcript_path, "Test Video"
+        )
+
+        # Verify no actual operations happened
+        mock_executor.upload_file.assert_not_called()
+        mock_executor.execute_with_retry.assert_not_called()
+        mock_executor.download_file.assert_not_called()
+
+        # Verify empty string returned in dry-run
+        assert result == ""

@@ -620,9 +620,21 @@ def main():
         args.remote_summarize,
     ]
     if any(remote_flags):
-        if not (args.remote_host or args.remote_path or args.remote_user):
+        # Check if remote is configured (either ad-hoc args or config file)
+        has_remote_config = args.remote_host or args.remote_path or args.remote_user
+        if not has_remote_config:
+            # Try to load from config file
+            try:
+                config = load_config()
+                config.get_remote(None)  # This will raise if no default
+                has_remote_config = True
+            except ValueError:
+                has_remote_config = False
+
+        if not has_remote_config:
             parser.error(
-                "Remote execution requires --remote-host, --remote-path, or --remote-user"
+                "Remote execution requires --remote-host, --remote-path, --remote-user, "
+                "or a default remote configured in ~/.config/audio-summary/config.yaml"
             )
         if args.remote_download and not args.from_youtube:
             parser.error("--remote-download requires --from-youtube")
