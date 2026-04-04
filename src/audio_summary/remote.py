@@ -1,6 +1,5 @@
 """Remote execution using paramiko."""
 
-import os
 import time
 from pathlib import Path
 from typing import Optional, Callable

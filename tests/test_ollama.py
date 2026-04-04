@@ -1,6 +1,5 @@
 """Tests for the audio-summary CLI Ollama-dependent functions."""
 
-import pytest
 from pathlib import Path
 import sys
 

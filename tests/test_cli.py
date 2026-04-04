@@ -139,6 +139,171 @@ class TestCleanThinkingChunks:
         assert result == "Hello World"
 
 
+class TestLockAndQueueArgs:
+    """Tests for lock and queue command-line arguments."""
+
+    def test_no_wait_flag_exists(self, mocker):
+        """Test that --no-wait flag is accepted and passed to LockManager."""
+        # Mock LockManager
+        mock_lock_manager = mocker.MagicMock()
+        mock_lock = mocker.MagicMock()
+        mock_lock_manager.acquire_lock.return_value = mock_lock
+        mocker.patch("audio_summary.cli.LockManager", return_value=mock_lock_manager)
+
+        # Mock argparse
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = "test.txt"
+        mock_args.no_wait = True
+        mock_args.timeout = 7200
+        mock_args.queue_status = False
+        mock_args.output = "./summary.md"
+        mock_args.title = None
+        mock_args.research = False
+        mock_args.append = False
+        mock_args.transcript_only = False
+        mock_args.language = None
+        mock_args.with_prompt = None
+        mock_args.remote_transcribe = False
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_host = None
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.dry_run = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock file operations
+        mocker.patch("pathlib.Path.is_file", return_value=True)
+        mocker.patch("builtins.open", mocker.mock_open(read_data="test transcript"))
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify LockManager was called with no_wait=True
+        call_kwargs = mock_lock_manager.acquire_lock.call_args[1]
+        assert call_kwargs.get("no_wait") is True
+
+    def test_timeout_flag_exists(self, mocker):
+        """Test that --timeout flag is accepted and passed to LockManager."""
+        # Mock LockManager
+        mock_lock_manager = mocker.MagicMock()
+        mock_lock = mocker.MagicMock()
+        mock_lock_manager.acquire_lock.return_value = mock_lock
+        mocker.patch("audio_summary.cli.LockManager", return_value=mock_lock_manager)
+
+        # Mock argparse
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = "test.txt"
+        mock_args.no_wait = False
+        mock_args.timeout = 3600
+        mock_args.queue_status = False
+        mock_args.output = "./summary.md"
+        mock_args.title = None
+        mock_args.research = False
+        mock_args.append = False
+        mock_args.transcript_only = False
+        mock_args.language = None
+        mock_args.with_prompt = None
+        mock_args.remote_transcribe = False
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_host = None
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.dry_run = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock file operations
+        mocker.patch("pathlib.Path.is_file", return_value=True)
+        mocker.patch("builtins.open", mocker.mock_open(read_data="test transcript"))
+
+        from audio_summary.cli import main
+
+        try:
+            main()
+        except SystemExit:
+            pass
+
+        # Verify LockManager was called with timeout=3600
+        call_kwargs = mock_lock_manager.acquire_lock.call_args[1]
+        assert call_kwargs.get("timeout") == 3600
+
+    def test_queue_status_flag_exits_immediately(self, mocker, capsys):
+        """Test that --queue-status exits immediately with status display."""
+        # Mock argparse for queue-status
+        mock_args = mocker.MagicMock()
+        mock_args.queue_status = True
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = None
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        # Mock get_queue_status
+        mock_get_queue_status = mocker.patch(
+            "audio_summary.cli.get_queue_status",
+            return_value="Test queue status output",
+        )
+
+        from audio_summary.cli import main
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        mock_get_queue_status.assert_called_once()
+
+        captured = capsys.readouterr()
+        assert "Test queue status output" in captured.out
+
+    def test_lock_acquisition_failure_with_no_wait(self, mocker, capsys):
+        """Test that lock acquisition failure with --no-wait exits cleanly."""
+        # Mock LockManager to return None (lock not acquired)
+        mock_lock_manager = mocker.MagicMock()
+        mock_lock_manager.acquire_lock.return_value = None
+        mocker.patch("audio_summary.cli.LockManager", return_value=mock_lock_manager)
+
+        # Mock argparse with all required attributes
+        mock_args = mocker.MagicMock()
+        mock_args.from_youtube = None
+        mock_args.from_local = None
+        mock_args.from_transcript = "test.txt"
+        mock_args.no_wait = True
+        mock_args.timeout = 7200
+        mock_args.queue_status = False
+        mock_args.with_prompt = None
+        mock_args.research = False
+        mock_args.remote_transcribe = False
+        mock_args.remote_download = False
+        mock_args.remote_transcription = False
+        mock_args.remote_summarize = False
+        mock_args.remote_host = None
+        mock_args.remote_path = None
+        mock_args.remote_user = None
+        mock_args.transcript_only = False
+
+        mocker.patch("argparse.ArgumentParser.parse_args", return_value=mock_args)
+
+        from audio_summary.cli import main
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+
+
 class TestOllamaModel:
     """Tests for OLLAMA_MODEL constant."""
 
@@ -247,8 +412,6 @@ class TestRemoteExecutionArgs:
 
     def test_remote_transcribe_shorthand_sets_both_flags(self, mocker):
         """Test that --remote-transcribe sets both --remote-download and --remote-transcription."""
-        import argparse
-        from audio_summary.cli import main
 
         # Mock sys.argv to simulate CLI arguments
         mocker.patch(
@@ -377,7 +540,6 @@ class TestRemoteExecutionArgs:
 
     def test_remote_summarize_with_from_transcript(self, mocker):
         """Test that --remote-summarize works with --from-transcript."""
-        import argparse
 
         mocker.patch(
             "sys.argv",
@@ -430,6 +592,17 @@ class TestGranularRemoteExecution:
             "audio_summary.cli.download_from_youtube"
         )
         mock_transcribe_file = mocker.patch("audio_summary.cli.transcribe_file")
+
+        # Mock LockManager with proper context manager behavior
+        mock_lock_manager = mocker.MagicMock()
+        mock_lock_context = mocker.MagicMock()
+        mock_lock_context.__enter__ = mocker.MagicMock(return_value=mock_lock_context)
+        mock_lock_context.__exit__ = mocker.MagicMock(return_value=None)
+        mock_lock_manager.acquire_lock.return_value = mock_lock_context
+        mocker.patch("audio_summary.cli.LockManager", return_value=mock_lock_manager)
+
+        # Mock check_and_wait_for_remote to return True (lock available)
+        mocker.patch("audio_summary.cli.check_and_wait_for_remote", return_value=True)
 
         # Mock the RemoteExecutor classes
         mock_executor = mocker.MagicMock()
@@ -568,7 +741,7 @@ class TestGranularRemoteExecution:
 
     def test_remote_summarize_only(self, mocker, tmp_path):
         """Test --remote-summarize executes summarization on remote only."""
-        from audio_summary.cli import main, execute_remote_summarize
+        from audio_summary.cli import main
 
         # Create a real transcript file
         transcript_file = tmp_path / "transcript.txt"

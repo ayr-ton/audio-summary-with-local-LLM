@@ -11,8 +11,9 @@ from datetime import datetime
 
 import os
 from .config import load_config, create_remote_config, RemoteConfig
-from .remote import RemoteExecutor
 from .progress import create_file_progress_bar
+from .lock_manager import LockManager, get_queue_status
+from .remote_lock import check_and_wait_for_remote
 
 OLLAMA_MODEL = "gpt-oss:20b"
 WHISPER_MODEL = "openai/whisper-large-v2"
@@ -318,10 +319,10 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
         remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
 
         if args.dry_run:
-            print(f"[DRY-RUN] Would check if MP3 exists on remote")
+            print("[DRY-RUN] Would check if MP3 exists on remote")
         elif not executor.check_file_exists(remote_mp3_path):
             # MP3 doesn't exist on remote, execute download
-            print(f"MP3 does not exist on remote, downloading...")
+            print("MP3 does not exist on remote, downloading...")
             cmd = f"uv run audio-summary --from-youtube '{args.from_youtube}' --transcript-only --output /dev/null"
             if args.dry_run:
                 print(f"[DRY-RUN] Would execute: {cmd}")
@@ -344,9 +345,7 @@ def execute_remote_download(args, remote_config, video_title, data_directory):
                 if not executor.check_file_exists(remote_mp3_path):
                     # File may have been skipped if it already existed - check for that in output
                     if "MP3 already exists" in stdout or "Skipping download" in stdout:
-                        print(
-                            f"Remote indicated file already exists, checking again..."
-                        )
+                        print("Remote indicated file already exists, checking again...")
                         # Wait a moment and check again
                         import time
 
@@ -678,7 +677,30 @@ def main():
         help="Show what would be executed without running",
     )
 
+    # Lock and queue arguments
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Fail immediately if another instance is running instead of waiting",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=7200,
+        help="Maximum seconds to wait for lock (default: 7200 = 2 hours)",
+    )
+    parser.add_argument(
+        "--queue-status",
+        action="store_true",
+        help="Show current queue status and exit",
+    )
+
     args = parser.parse_args()
+
+    # Handle --queue-status early
+    if args.queue_status:
+        print(get_queue_status())
+        sys.exit(0)
 
     # Argument validation
     if args.with_prompt and not args.from_transcript:
@@ -759,283 +781,316 @@ def main():
     else:
         from .remote import RemoteExecutor as RemoteExecutorClass
 
-    # Phase 1: Download
-    if args.from_youtube:
-        # Get title first
-        video_title = (
-            args.title or get_youtube_title(args.from_youtube) or "Unknown Video"
-        )
+    # Acquire lock before processing
+    lock_manager = LockManager()
+    command = " ".join(sys.argv[1:])
+    remote_host = remote_config.host if remote_config else None
+    lock = lock_manager.acquire_lock(
+        command=command,
+        remote_host=remote_host,
+        timeout=args.timeout,
+        no_wait=args.no_wait,
+    )
+    if not lock:
+        sys.exit(1)
 
-        if args.remote_download:
-            # Check if MP3 already exists locally before connecting to remote
-            mp3_filename = generate_filename(video_title, ".mp3")
-            local_mp3_path = data_directory / mp3_filename
-
-            if local_mp3_path.is_file():
-                print(f"MP3 already exists locally: {local_mp3_path}")
-                print("Skipping remote download.")
-                audio_file_path = local_mp3_path
-            else:
-                # Check if MP3 already exists on remote before downloading
-                remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
-
-                # Determine which executor to use for checking
-                if use_subprocess_ssh:
-                    from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
-                else:
-                    from .remote import RemoteExecutor as RemoteExecutorClass
-
-                with RemoteExecutorClass(remote_config) as executor:
-                    if executor.check_file_exists(remote_mp3_path):
-                        print(f"MP3 already exists on remote: {remote_mp3_path}")
-                        print("Skipping download on remote.")
-                        # Download existing file from remote
-                        print("Downloading existing MP3 from remote...")
-                        data_directory.mkdir(parents=True, exist_ok=True)
-                        local_mp3_path = data_directory / mp3_filename
-                        mp3_size = executor.get_file_size(remote_mp3_path)
-                        if mp3_size > 0 and not args.dry_run:
-                            progress = create_file_progress_bar(mp3_filename, mp3_size)
-                            executor.download_file(
-                                remote_mp3_path,
-                                local_mp3_path,
-                                progress_bar=progress,
-                                dry_run=args.dry_run,
-                            )
-                            print(f"MP3 downloaded to: {local_mp3_path}")
-                        audio_file_path = local_mp3_path
-                    else:
-                        # Download on remote
-                        print(f"Downloading YouTube video from {args.from_youtube}")
-                        audio_file_path = execute_remote_download(
-                            args, remote_config, video_title, data_directory
-                        )
-        else:
-            # Check if MP3 already exists locally before downloading
-            mp3_filename = generate_filename(video_title, ".mp3")
-            local_mp3_path = data_directory / mp3_filename
-
-            if local_mp3_path.is_file():
-                print(f"MP3 already exists locally: {local_mp3_path}")
-                print("Skipping download.")
-                audio_file_path = local_mp3_path
-            else:
-                print(f"Downloading YouTube video from {args.from_youtube}")
-                try:
-                    audio_file_path = download_from_youtube(
-                        args.from_youtube, str(data_directory), title=video_title
-                    )
-                    print(f"Audio downloaded to: {audio_file_path}")
-                except Exception as e:
-                    print(f"Error during YouTube download: {e}")
+    # Enter lock context - ALL processing must be inside this block
+    with lock:
+        # Check remote lock if using remote execution
+        if remote_config:
+            with RemoteExecutorClass(remote_config) as executor:
+                if not check_and_wait_for_remote(
+                    executor, remote_config, args.timeout, args.no_wait
+                ):
                     sys.exit(1)
 
-    elif args.from_local:
-        file_path = Path(args.from_local)
-        if not file_path.is_file():
-            print(f"Error: Local file not found at {file_path}")
-            sys.exit(1)
-
-        # Use provided title or filename
-        video_title = args.title or file_path.stem
-        audio_file_path = file_path
-
-        # Generate transcript filename
-        transcript_filename = generate_filename(
-            sanitize_title(video_title), ".txt", is_transcript=True
-        )
-        transcript_path = data_directory / transcript_filename
-
-    elif args.from_transcript:
-        transcript_file_path = Path(args.from_transcript)
-        if not transcript_file_path.is_file():
-            print(f"Error: Transcript file not found at {transcript_file_path}")
-            sys.exit(1)
-        try:
-            print(f"Reading transcript from: {transcript_file_path}")
-            with open(transcript_file_path, "r") as f:
-                transcript = f.read()
-            transcript_path = transcript_file_path
-
-            # Try to extract title from filename or use --title
-            if args.title:
-                video_title = args.title
-            else:
-                # Extract from filename pattern: "YYYY-MM-DD Title_transcript.txt"
-                stem = transcript_file_path.stem
-                if "_transcript" in stem:
-                    video_title = (
-                        stem.replace("_transcript", "").split(" ", 2)[-1]
-                        if " " in stem
-                        else stem
-                    )
-                else:
-                    video_title = stem
-        except Exception as e:
-            print(f"Error reading transcript file {transcript_file_path}: {e}")
-            sys.exit(1)
-
-    # Phase 2: Transcription (if not already have transcript)
-    if not transcript and audio_file_path:
-        try:
-            # Generate transcript filename first
-            transcript_filename = generate_filename(
-                video_title, ".txt", is_transcript=True
+        # Phase 1: Download
+        if args.from_youtube:
+            # Get title first
+            video_title = (
+                args.title or get_youtube_title(args.from_youtube) or "Unknown Video"
             )
-            transcript_path = data_directory / transcript_filename
 
-            if args.remote_transcription:
-                # Check if transcript already exists locally before connecting to remote
-                if transcript_path.is_file():
-                    print(f"Transcript already exists locally: {transcript_path}")
-                    print("Skipping remote transcription.")
-                    with open(transcript_path, "r") as f:
-                        transcript = f.read()
+            if args.remote_download:
+                # Check if MP3 already exists locally before connecting to remote
+                mp3_filename = generate_filename(video_title, ".mp3")
+                local_mp3_path = data_directory / mp3_filename
+
+                if local_mp3_path.is_file():
+                    print(f"MP3 already exists locally: {local_mp3_path}")
+                    print("Skipping remote download.")
+                    audio_file_path = local_mp3_path
                 else:
-                    # Check if transcript already exists on remote
-                    remote_transcript_path = (
-                        f"{remote_config.path}/Attachments/{transcript_filename}"
-                    )
+                    # Check if MP3 already exists on remote before downloading
+                    remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
 
-                    # Determine which executor to use
+                    # Determine which executor to use for checking
                     if use_subprocess_ssh:
                         from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
                     else:
                         from .remote import RemoteExecutor as RemoteExecutorClass
 
                     with RemoteExecutorClass(remote_config) as executor:
-                        if executor.check_file_exists(remote_transcript_path):
-                            print(
-                                f"Transcript already exists on remote: {remote_transcript_path}"
-                            )
-                            print("Skipping transcription on remote.")
-                            # Download existing transcript
-                            transcript_size = executor.get_file_size(
-                                remote_transcript_path
-                            )
-                            if transcript_size > 0 and not args.dry_run:
+                        if executor.check_file_exists(remote_mp3_path):
+                            print(f"MP3 already exists on remote: {remote_mp3_path}")
+                            print("Skipping download on remote.")
+                            # Download existing file from remote
+                            print("Downloading existing MP3 from remote...")
+                            data_directory.mkdir(parents=True, exist_ok=True)
+                            local_mp3_path = data_directory / mp3_filename
+                            mp3_size = executor.get_file_size(remote_mp3_path)
+                            if mp3_size > 0 and not args.dry_run:
                                 progress = create_file_progress_bar(
-                                    transcript_filename, transcript_size
+                                    mp3_filename, mp3_size
                                 )
                                 executor.download_file(
-                                    remote_transcript_path,
-                                    transcript_path,
+                                    remote_mp3_path,
+                                    local_mp3_path,
                                     progress_bar=progress,
                                     dry_run=args.dry_run,
                                 )
-                                print(f"Transcript downloaded to: {transcript_path}")
-                            # Read transcript locally
-                            with open(transcript_path, "r") as f:
-                                transcript = f.read()
+                                print(f"MP3 downloaded to: {local_mp3_path}")
+                            audio_file_path = local_mp3_path
                         else:
-                            # Transcribe on remote
-                            transcript = execute_remote_transcription(
-                                args,
-                                remote_config,
-                                audio_file_path,
-                                transcript_path,
-                                video_title,
+                            # Download on remote
+                            print(f"Downloading YouTube video from {args.from_youtube}")
+                            audio_file_path = execute_remote_download(
+                                args, remote_config, video_title, data_directory
                             )
             else:
-                # Check if transcript already exists locally
-                if transcript_path.is_file():
-                    print(f"Transcript already exists locally: {transcript_path}")
-                    print("Skipping transcription.")
-                    with open(transcript_path, "r") as f:
-                        transcript = f.read()
+                # Check if MP3 already exists locally before downloading
+                mp3_filename = generate_filename(video_title, ".mp3")
+                local_mp3_path = data_directory / mp3_filename
+
+                if local_mp3_path.is_file():
+                    print(f"MP3 already exists locally: {local_mp3_path}")
+                    print("Skipping download.")
+                    audio_file_path = local_mp3_path
                 else:
-                    # Transcribe locally
-                    print(f"Transcribing file: {audio_file_path}")
-                    transcript = transcribe_file(
-                        str(audio_file_path), str(transcript_path), language
-                    )
-        except Exception as e:
-            print(f"Error during transcription: {e}")
-            sys.exit(1)
+                    print(f"Downloading YouTube video from {args.from_youtube}")
+                    try:
+                        audio_file_path = download_from_youtube(
+                            args.from_youtube, str(data_directory), title=video_title
+                        )
+                        print(f"Audio downloaded to: {audio_file_path}")
+                    except Exception as e:
+                        print(f"Error during YouTube download: {e}")
+                        sys.exit(1)
 
-    # Phase 3: Summarization
-    if args.remote_summarize and transcript:
-        try:
-            # Summarize on remote
-            md_path = execute_remote_summarize(
-                args, remote_config, Path(transcript_path), video_title
+        elif args.from_local:
+            file_path = Path(args.from_local)
+            if not file_path.is_file():
+                print(f"Error: Local file not found at {file_path}")
+                sys.exit(1)
+
+            # Use provided title or filename
+            video_title = args.title or file_path.stem
+            audio_file_path = file_path
+
+            # Generate transcript filename
+            transcript_filename = generate_filename(
+                sanitize_title(video_title), ".txt", is_transcript=True
             )
-            if md_path:
-                print(f"Summary saved to: {md_path}")
-            return
-        except Exception as e:
-            print(f"Error during remote summarization: {e}")
-            sys.exit(1)
+            transcript_path = data_directory / transcript_filename
 
-    # LLM Processing
-    if transcript and not args.transcript_only:
-        if args.with_prompt:
-            print("Asking specific question...")
-            try:
-                llm_result = ask_question_from_text(transcript, args.with_prompt)
-            except Exception as e:
-                print(f"Error getting answer from Ollama: {e}")
+        elif args.from_transcript:
+            transcript_file_path = Path(args.from_transcript)
+            if not transcript_file_path.is_file():
+                print(f"Error: Transcript file not found at {transcript_file_path}")
                 sys.exit(1)
-        elif args.research:
-            print("Generating research analysis...")
             try:
-                llm_result = research_text(transcript)
+                print(f"Reading transcript from: {transcript_file_path}")
+                with open(transcript_file_path, "r") as f:
+                    transcript = f.read()
+                transcript_path = transcript_file_path
+
+                # Try to extract title from filename or use --title
+                if args.title:
+                    video_title = args.title
+                else:
+                    # Extract from filename pattern: "YYYY-MM-DD Title_transcript.txt"
+                    stem = transcript_file_path.stem
+                    if "_transcript" in stem:
+                        video_title = (
+                            stem.replace("_transcript", "").split(" ", 2)[-1]
+                            if " " in stem
+                            else stem
+                        )
+                    else:
+                        video_title = stem
             except Exception as e:
-                print(f"Error generating research analysis from Ollama: {e}")
-                sys.exit(1)
-        else:
-            print("Generating summary...")
-            try:
-                llm_result = summarize_text(transcript)
-            except Exception as e:
-                print(f"Error generating summary from Ollama: {e}")
+                print(f"Error reading transcript file {transcript_file_path}: {e}")
                 sys.exit(1)
 
-    # Output
-    if args.transcript_only:
-        if transcript:
-            print(f"Transcription complete. Transcript saved to {transcript_path}")
-        else:
-            print("No transcript was generated (check for errors above).")
-        return
+        # Phase 2: Transcription (if not already have transcript)
+        if not transcript and audio_file_path:
+            try:
+                # Generate transcript filename first
+                transcript_filename = generate_filename(
+                    video_title, ".txt", is_transcript=True
+                )
+                transcript_path = data_directory / transcript_filename
 
-    if llm_result:
-        try:
-            # Determine output path
-            if args.output == "./summary.md" and video_title:
-                # Generate default output filename with date prefix
-                output_filename = generate_filename(sanitize_title(video_title), ".md")
-                output_path = Path(output_filename)
+                if args.remote_transcription:
+                    # Check if transcript already exists locally before connecting to remote
+                    if transcript_path.is_file():
+                        print(f"Transcript already exists locally: {transcript_path}")
+                        print("Skipping remote transcription.")
+                        with open(transcript_path, "r") as f:
+                            transcript = f.read()
+                    else:
+                        # Check if transcript already exists on remote
+                        remote_transcript_path = (
+                            f"{remote_config.path}/Attachments/{transcript_filename}"
+                        )
+
+                        # Determine which executor to use
+                        if use_subprocess_ssh:
+                            from .remote_ssh import (
+                                RemoteExecutorSSH as RemoteExecutorClass,
+                            )
+                        else:
+                            from .remote import RemoteExecutor as RemoteExecutorClass
+
+                        with RemoteExecutorClass(remote_config) as executor:
+                            if executor.check_file_exists(remote_transcript_path):
+                                print(
+                                    f"Transcript already exists on remote: {remote_transcript_path}"
+                                )
+                                print("Skipping transcription on remote.")
+                                # Download existing transcript
+                                transcript_size = executor.get_file_size(
+                                    remote_transcript_path
+                                )
+                                if transcript_size > 0 and not args.dry_run:
+                                    progress = create_file_progress_bar(
+                                        transcript_filename, transcript_size
+                                    )
+                                    executor.download_file(
+                                        remote_transcript_path,
+                                        transcript_path,
+                                        progress_bar=progress,
+                                        dry_run=args.dry_run,
+                                    )
+                                    print(
+                                        f"Transcript downloaded to: {transcript_path}"
+                                    )
+                                # Read transcript locally
+                                with open(transcript_path, "r") as f:
+                                    transcript = f.read()
+                            else:
+                                # Transcribe on remote
+                                transcript = execute_remote_transcription(
+                                    args,
+                                    remote_config,
+                                    audio_file_path,
+                                    transcript_path,
+                                    video_title,
+                                )
+                else:
+                    # Check if transcript already exists locally
+                    if transcript_path.is_file():
+                        print(f"Transcript already exists locally: {transcript_path}")
+                        print("Skipping transcription.")
+                        with open(transcript_path, "r") as f:
+                            transcript = f.read()
+                    else:
+                        # Transcribe locally
+                        print(f"Transcribing file: {audio_file_path}")
+                        transcript = transcribe_file(
+                            str(audio_file_path), str(transcript_path), language
+                        )
+            except Exception as e:
+                print(f"Error during transcription: {e}")
+                sys.exit(1)
+
+        # Phase 3: Summarization
+        if args.remote_summarize and transcript:
+            try:
+                # Summarize on remote
+                md_path = execute_remote_summarize(
+                    args, remote_config, Path(transcript_path), video_title
+                )
+                if md_path:
+                    print(f"Summary saved to: {md_path}")
+                return
+            except Exception as e:
+                print(f"Error during remote summarization: {e}")
+                sys.exit(1)
+
+        # LLM Processing
+        if transcript and not args.transcript_only:
+            if args.with_prompt:
+                print("Asking specific question...")
+                try:
+                    llm_result = ask_question_from_text(transcript, args.with_prompt)
+                except Exception as e:
+                    print(f"Error getting answer from Ollama: {e}")
+                    sys.exit(1)
+            elif args.research:
+                print("Generating research analysis...")
+                try:
+                    llm_result = research_text(transcript)
+                except Exception as e:
+                    print(f"Error generating research analysis from Ollama: {e}")
+                    sys.exit(1)
             else:
-                output_path = Path(args.output)
+                print("Generating summary...")
+                try:
+                    llm_result = summarize_text(transcript)
+                except Exception as e:
+                    print(f"Error generating summary from Ollama: {e}")
+                    sys.exit(1)
 
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Output
+        if args.transcript_only:
+            if transcript:
+                print(f"Transcription complete. Transcript saved to {transcript_path}")
+            else:
+                print("No transcript was generated (check for errors above).")
+            return
 
-            file_mode = "a" if args.append else "w"
+        if llm_result:
+            try:
+                # Determine output path
+                if args.output == "./summary.md" and video_title:
+                    # Generate default output filename with date prefix
+                    output_filename = generate_filename(
+                        sanitize_title(video_title), ".md"
+                    )
+                    output_path = Path(output_filename)
+                else:
+                    output_path = Path(args.output)
+
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                file_mode = "a" if args.append else "w"
+                print(
+                    f"Writing result to {output_path} (mode: {'append' if args.append else 'overwrite'})"
+                )
+                with open(output_path, file_mode, encoding="utf-8") as md_file:
+                    if (
+                        args.append
+                        and output_path.exists()
+                        and output_path.stat().st_size > 0
+                    ):
+                        md_file.write("\n\n---\n\n")
+
+                    md_file.write(llm_result)
+
+                print(f"Output successfully written to {output_path}")
+
+            except Exception as e:
+                print(f"Error writing output file: {e}")
+                sys.exit(1)
+        elif transcript:
             print(
-                f"Writing result to {output_path} (mode: {'append' if args.append else 'overwrite'})"
+                "Transcript generated, but no summary or answer was requested or generated (check for errors)."
             )
-            with open(output_path, file_mode, encoding="utf-8") as md_file:
-                if (
-                    args.append
-                    and output_path.exists()
-                    and output_path.stat().st_size > 0
-                ):
-                    md_file.write("\n\n---\n\n")
+        else:
+            print("Processing failed. No transcript or summary/answer generated.")
 
-                md_file.write(llm_result)
-
-            print(f"Output successfully written to {output_path}")
-
-        except Exception as e:
-            print(f"Error writing output file: {e}")
-            sys.exit(1)
-    elif transcript:
-        print(
-            "Transcript generated, but no summary or answer was requested or generated (check for errors)."
-        )
-    else:
-        print("Processing failed. No transcript or summary/answer generated.")
+    # Lock is automatically released when exiting the 'with lock:' block
 
 
 if __name__ == "__main__":

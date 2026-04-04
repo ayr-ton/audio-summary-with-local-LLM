@@ -213,7 +213,6 @@ class RemoteExecutorSSH:
         dry_run: bool = False,
     ) -> tuple[bool, str, str]:
         """Execute with automatic retry."""
-        import time
 
         if max_retries is None:
             max_retries = self.config.max_retries
