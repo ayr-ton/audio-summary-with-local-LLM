@@ -19,7 +19,15 @@ Audio Summary with Local LLM - A CLI tool that transcribes and summarizes audio/
 - `uv run ruff format .` - Format all files
 - `uv run ruff format src/audio_summary/cli.py` - Format single file
 
-**Note:** No test framework is configured yet. To add tests, use pytest and configure in pyproject.toml.
+**Note:** Tests use pytest. Run with `uv run pytest`.
+
+## Ollama Configuration
+
+The tool supports both local Ollama and Ollama Cloud via environment variables:
+- `OLLAMA_HOST` - Ollama server URL (default: `http://localhost:11434`)
+- `OLLAMA_API_KEY` - API key for Ollama Cloud authentication
+
+The `get_ollama_client()` function in cli.py creates an authenticated client using these environment variables.
 
 ## Code Style Guidelines
 
@@ -93,7 +101,7 @@ src/audio_summary/
 - **Package manager:** uv (preferred) or pip
 - **Build system:** setuptools
 - **CLI entry point:** `audio-summary` → `audio_summary.cli:main`
-- **Default LLM:** gpt-oss:120b (via Ollama)
+- **Default LLM:** gpt-oss:120b (via Ollama, supports both local and Ollama Cloud)
 
 ## Pre-commit Checklist
 

@@ -9,6 +9,7 @@ import sys
 import re
 from datetime import datetime
 
+import os
 from .config import load_config, create_remote_config, RemoteConfig
 from .remote import RemoteExecutor
 from .progress import create_file_progress_bar
@@ -17,6 +18,18 @@ OLLAMA_MODEL = "gpt-oss:20b"
 WHISPER_MODEL = "openai/whisper-large-v2"
 WHISPER_LANGUAGE = "en"
 MAX_TITLE_LENGTH = 80
+
+
+def get_ollama_client() -> ollama.Client:
+    """Get Ollama client with proper authentication configuration."""
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    api_key = os.environ.get("OLLAMA_API_KEY")
+
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    return ollama.Client(host=host, headers=headers if headers else None)
 
 
 def resolve_remote_config(args, remote_name: str | None = None) -> RemoteConfig:
@@ -197,7 +210,8 @@ def summarize_text(text: str) -> str:
     and finish your summary with a concluding sentence."""
 
     print(f"Sending request to Ollama ({OLLAMA_MODEL}) for summarization...")
-    response = ollama.chat(
+    client = get_ollama_client()
+    response = client.chat(
         model=OLLAMA_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -241,7 +255,8 @@ def research_text(text: str) -> str:
     Make your analysis insightful, accurate, and comprehensive."""
 
     print(f"Sending request to Ollama ({OLLAMA_MODEL}) for research analysis...")
-    response = ollama.chat(
+    client = get_ollama_client()
+    response = client.chat(
         model=OLLAMA_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -263,7 +278,8 @@ def ask_question_from_text(text: str, question: str) -> str:
     """
 
     print(f"Sending request to Ollama ({OLLAMA_MODEL}) to answer question...")
-    response = ollama.chat(
+    client = get_ollama_client()
+    response = client.chat(
         model=OLLAMA_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},

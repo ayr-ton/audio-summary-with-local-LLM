@@ -70,11 +70,40 @@ pipx install -e .
 Download and use the default model (gpt-oss:120b):
 
 ```bash
-ollama pull gpt-oss:120b
+ollama pull gpt-oss:20b
 
 # Test the access:
-ollama run gpt-oss:120b "which tools do you have available?"
+ollama run gpt-oss:20b "which tools do you have available?"
 ```
+
+### Ollama Cloud Configuration (Optional)
+
+The tool supports both local Ollama and Ollama Cloud. By default, it connects to `http://localhost:11434`. To use Ollama Cloud:
+
+**1. Set environment variables:**
+
+```bash
+export OLLAMA_HOST="https://ollama.com"
+export OLLAMA_API_KEY="your-api-key-here"
+```
+
+**2. Add to your shell profile (e.g., ~/.bashrc or ~/.zshrc):**
+
+```bash
+echo 'export OLLAMA_HOST="https://ollama.com"' >> ~/.bashrc
+echo 'export OLLAMA_API_KEY="your-api-key-here"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**3. Verify configuration:**
+
+```bash
+ollama list  # Should show your cloud models
+```
+
+**Environment Variables:**
+- `OLLAMA_HOST` - Ollama server URL (default: `http://localhost:11434`)
+- `OLLAMA_API_KEY` - API key for Ollama Cloud authentication
 
 ### Granular Remote Execution (Advanced)
 

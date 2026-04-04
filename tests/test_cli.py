@@ -1,5 +1,6 @@
 """Tests for the audio-summary CLI utility functions."""
 
+import os
 import pytest
 from datetime import datetime
 from pathlib import Path
@@ -148,6 +149,97 @@ class TestOllamaModel:
     def test_model_is_string(self):
         """Test that OLLAMA_MODEL is a string."""
         assert isinstance(OLLAMA_MODEL, str)
+
+
+class TestOllamaClientAuthentication:
+    """Tests for Ollama client authentication."""
+
+    def test_get_ollama_client_without_api_key(self, mocker):
+        """Test that get_ollama_client works without API key."""
+        import ollama
+        from audio_summary.cli import get_ollama_client
+
+        # Clear environment variables
+        mocker.patch.dict(os.environ, {}, clear=True)
+        mocker.patch.dict(os.environ, {"OLLAMA_HOST": "http://localhost:11434"})
+
+        # Mock ollama.Client
+        mock_client = mocker.MagicMock()
+        mocker.patch("ollama.Client", return_value=mock_client)
+
+        client = get_ollama_client()
+
+        # Verify client was created without headers
+        ollama.Client.assert_called_once_with(
+            host="http://localhost:11434",
+            headers=None,
+        )
+
+    def test_get_ollama_client_with_api_key(self, mocker):
+        """Test that get_ollama_client uses API key from environment."""
+        import ollama
+        from audio_summary.cli import get_ollama_client
+
+        # Set environment variables
+        mocker.patch.dict(
+            os.environ,
+            {
+                "OLLAMA_HOST": "https://ollama.com",
+                "OLLAMA_API_KEY": "test-api-key-12345",
+            },
+        )
+
+        # Mock ollama.Client
+        mock_client = mocker.MagicMock()
+        mocker.patch("ollama.Client", return_value=mock_client)
+
+        client = get_ollama_client()
+
+        # Verify client was created with Authorization header
+        ollama.Client.assert_called_once_with(
+            host="https://ollama.com",
+            headers={"Authorization": "Bearer test-api-key-12345"},
+        )
+
+    def test_get_ollama_client_uses_default_host(self, mocker):
+        """Test that get_ollama_client uses localhost as default."""
+        import ollama
+        from audio_summary.cli import get_ollama_client
+
+        # Clear environment variables
+        mocker.patch.dict(os.environ, {}, clear=True)
+
+        # Mock ollama.Client
+        mock_client = mocker.MagicMock()
+        mocker.patch("ollama.Client", return_value=mock_client)
+
+        client = get_ollama_client()
+
+        # Verify client was created with default localhost
+        ollama.Client.assert_called_once_with(
+            host="http://localhost:11434",
+            headers=None,
+        )
+
+    def test_get_ollama_client_with_only_api_key(self, mocker):
+        """Test that get_ollama_client works with only API key set."""
+        import ollama
+        from audio_summary.cli import get_ollama_client
+
+        # Set only API key, not host
+        mocker.patch.dict(os.environ, {"OLLAMA_API_KEY": "secret-key"}, clear=True)
+
+        # Mock ollama.Client
+        mock_client = mocker.MagicMock()
+        mocker.patch("ollama.Client", return_value=mock_client)
+
+        client = get_ollama_client()
+
+        # Verify client was created with default host and API key
+        ollama.Client.assert_called_once_with(
+            host="http://localhost:11434",
+            headers={"Authorization": "Bearer secret-key"},
+        )
 
 
 class TestRemoteExecutionArgs:
