@@ -22,8 +22,18 @@ MAX_TITLE_LENGTH = 80
 
 def get_ollama_client() -> ollama.Client:
     """Get Ollama client with proper authentication configuration."""
-    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    host = os.environ.get("OLLAMA_HOST", "localhost:11434")
     api_key = os.environ.get("OLLAMA_API_KEY")
+
+    # Determine protocol based on API key presence
+    if api_key:
+        protocol = "https"
+    else:
+        protocol = "http"
+
+    # Ensure host has protocol prefix
+    if not host.startswith(("http://", "https://")):
+        host = f"{protocol}://{host}"
 
     headers = {}
     if api_key:
@@ -755,41 +765,49 @@ def main():
         )
 
         if args.remote_download:
-            # Check if MP3 already exists on remote before downloading
+            # Check if MP3 already exists locally before connecting to remote
             mp3_filename = generate_filename(video_title, ".mp3")
-            remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
+            local_mp3_path = data_directory / mp3_filename
 
-            # Determine which executor to use for checking
-            if use_subprocess_ssh:
-                from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
+            if local_mp3_path.is_file():
+                print(f"MP3 already exists locally: {local_mp3_path}")
+                print("Skipping remote download.")
+                audio_file_path = local_mp3_path
             else:
-                from .remote import RemoteExecutor as RemoteExecutorClass
+                # Check if MP3 already exists on remote before downloading
+                remote_mp3_path = f"{remote_config.path}/Attachments/{mp3_filename}"
 
-            with RemoteExecutorClass(remote_config) as executor:
-                if executor.check_file_exists(remote_mp3_path):
-                    print(f"MP3 already exists on remote: {remote_mp3_path}")
-                    print("Skipping download on remote.")
-                    # Download existing file from remote
-                    print("Downloading existing MP3 from remote...")
-                    data_directory.mkdir(parents=True, exist_ok=True)
-                    local_mp3_path = data_directory / mp3_filename
-                    mp3_size = executor.get_file_size(remote_mp3_path)
-                    if mp3_size > 0 and not args.dry_run:
-                        progress = create_file_progress_bar(mp3_filename, mp3_size)
-                        executor.download_file(
-                            remote_mp3_path,
-                            local_mp3_path,
-                            progress_bar=progress,
-                            dry_run=args.dry_run,
-                        )
-                        print(f"MP3 downloaded to: {local_mp3_path}")
-                    audio_file_path = local_mp3_path
+                # Determine which executor to use for checking
+                if use_subprocess_ssh:
+                    from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
                 else:
-                    # Download on remote
-                    print(f"Downloading YouTube video from {args.from_youtube}")
-                    audio_file_path = execute_remote_download(
-                        args, remote_config, video_title, data_directory
-                    )
+                    from .remote import RemoteExecutor as RemoteExecutorClass
+
+                with RemoteExecutorClass(remote_config) as executor:
+                    if executor.check_file_exists(remote_mp3_path):
+                        print(f"MP3 already exists on remote: {remote_mp3_path}")
+                        print("Skipping download on remote.")
+                        # Download existing file from remote
+                        print("Downloading existing MP3 from remote...")
+                        data_directory.mkdir(parents=True, exist_ok=True)
+                        local_mp3_path = data_directory / mp3_filename
+                        mp3_size = executor.get_file_size(remote_mp3_path)
+                        if mp3_size > 0 and not args.dry_run:
+                            progress = create_file_progress_bar(mp3_filename, mp3_size)
+                            executor.download_file(
+                                remote_mp3_path,
+                                local_mp3_path,
+                                progress_bar=progress,
+                                dry_run=args.dry_run,
+                            )
+                            print(f"MP3 downloaded to: {local_mp3_path}")
+                        audio_file_path = local_mp3_path
+                    else:
+                        # Download on remote
+                        print(f"Downloading YouTube video from {args.from_youtube}")
+                        audio_file_path = execute_remote_download(
+                            args, remote_config, video_title, data_directory
+                        )
         else:
             # Check if MP3 already exists locally before downloading
             mp3_filename = generate_filename(video_title, ".mp3")
@@ -809,12 +827,6 @@ def main():
                 except Exception as e:
                     print(f"Error during YouTube download: {e}")
                     sys.exit(1)
-
-        # Generate transcript filename
-        transcript_filename = generate_filename(
-            sanitize_title(video_title), ".txt", is_transcript=True
-        )
-        transcript_path = data_directory / transcript_filename
 
     elif args.from_local:
         file_path = Path(args.from_local)
@@ -864,52 +876,64 @@ def main():
     # Phase 2: Transcription (if not already have transcript)
     if not transcript and audio_file_path:
         try:
+            # Generate transcript filename first
+            transcript_filename = generate_filename(
+                video_title, ".txt", is_transcript=True
+            )
+            transcript_path = data_directory / transcript_filename
+
             if args.remote_transcription:
-                # Check if transcript already exists on remote
-                transcript_filename = generate_filename(
-                    video_title, ".txt", is_transcript=True
-                )
-                remote_transcript_path = (
-                    f"{remote_config.path}/Attachments/{transcript_filename}"
-                )
-
-                # Determine which executor to use
-                if use_subprocess_ssh:
-                    from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
+                # Check if transcript already exists locally before connecting to remote
+                if transcript_path.is_file():
+                    print(f"Transcript already exists locally: {transcript_path}")
+                    print("Skipping remote transcription.")
+                    with open(transcript_path, "r") as f:
+                        transcript = f.read()
                 else:
-                    from .remote import RemoteExecutor as RemoteExecutorClass
+                    # Check if transcript already exists on remote
+                    remote_transcript_path = (
+                        f"{remote_config.path}/Attachments/{transcript_filename}"
+                    )
 
-                with RemoteExecutorClass(remote_config) as executor:
-                    if executor.check_file_exists(remote_transcript_path):
-                        print(
-                            f"Transcript already exists on remote: {remote_transcript_path}"
-                        )
-                        print("Skipping transcription on remote.")
-                        # Download existing transcript
-                        transcript_size = executor.get_file_size(remote_transcript_path)
-                        if transcript_size > 0 and not args.dry_run:
-                            progress = create_file_progress_bar(
-                                transcript_filename, transcript_size
-                            )
-                            executor.download_file(
-                                remote_transcript_path,
-                                transcript_path,
-                                progress_bar=progress,
-                                dry_run=args.dry_run,
-                            )
-                            print(f"Transcript downloaded to: {transcript_path}")
-                        # Read transcript locally
-                        with open(transcript_path, "r") as f:
-                            transcript = f.read()
+                    # Determine which executor to use
+                    if use_subprocess_ssh:
+                        from .remote_ssh import RemoteExecutorSSH as RemoteExecutorClass
                     else:
-                        # Transcribe on remote
-                        transcript = execute_remote_transcription(
-                            args,
-                            remote_config,
-                            audio_file_path,
-                            transcript_path,
-                            video_title,
-                        )
+                        from .remote import RemoteExecutor as RemoteExecutorClass
+
+                    with RemoteExecutorClass(remote_config) as executor:
+                        if executor.check_file_exists(remote_transcript_path):
+                            print(
+                                f"Transcript already exists on remote: {remote_transcript_path}"
+                            )
+                            print("Skipping transcription on remote.")
+                            # Download existing transcript
+                            transcript_size = executor.get_file_size(
+                                remote_transcript_path
+                            )
+                            if transcript_size > 0 and not args.dry_run:
+                                progress = create_file_progress_bar(
+                                    transcript_filename, transcript_size
+                                )
+                                executor.download_file(
+                                    remote_transcript_path,
+                                    transcript_path,
+                                    progress_bar=progress,
+                                    dry_run=args.dry_run,
+                                )
+                                print(f"Transcript downloaded to: {transcript_path}")
+                            # Read transcript locally
+                            with open(transcript_path, "r") as f:
+                                transcript = f.read()
+                        else:
+                            # Transcribe on remote
+                            transcript = execute_remote_transcription(
+                                args,
+                                remote_config,
+                                audio_file_path,
+                                transcript_path,
+                                video_title,
+                            )
             else:
                 # Check if transcript already exists locally
                 if transcript_path.is_file():
