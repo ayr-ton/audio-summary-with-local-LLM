@@ -12,11 +12,6 @@ from audio_summary.cli import summarize_text, research_text, ask_question_from_t
 class TestSummarizeText:
     """Tests for the summarize_text function."""
 
-    @pytest.fixture
-    def mock_ollama_response(self):
-        """Mock response from Ollama API."""
-        return {"message": {"content": "# Summary\n\nThis is a test summary."}}
-
     def test_calls_ollama_with_correct_model(self, mocker):
         """Test that summarize_text calls Ollama with gpt-oss:20b."""
         mock_chat = mocker.patch("audio_summary.cli.ollama.chat")
