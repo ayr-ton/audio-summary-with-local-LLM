@@ -364,7 +364,7 @@ class TestGranularRemoteExecution:
 
         data_directory = tmp_path
 
-        result = execute_remote_download(
+        _ = execute_remote_download(
             mock_args, config, "Test Video", data_directory
         )
 
@@ -456,7 +456,7 @@ class TestGranularRemoteExecution:
         audio_file_path.write_text("fake audio content")
         transcript_path = tmp_path / "test_transcript.txt"
 
-        result = execute_remote_transcription(
+        _ = execute_remote_transcription(
             mock_args, config, audio_file_path, transcript_path, "Test Video"
         )
 
@@ -491,7 +491,7 @@ class TestGranularRemoteExecution:
         audio_file_path.write_text("fake audio content")
         transcript_path = tmp_path / "test_transcript.txt"
 
-        result = execute_remote_transcription(
+        _ = execute_remote_transcription(
             mock_args, config, audio_file_path, transcript_path, "Test Video"
         )
 
